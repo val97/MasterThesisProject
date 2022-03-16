@@ -1,0 +1,12 @@
+{
+"batch_size": 32,
+"creator_gamma": 0.99,
+"epoch_runs": 5,
+"epoch_trains": 1,
+"epochs": 300,
+"nsteps": 1600,
+"save_frequency": 25,
+"start_save": 25,
+"summary_frequency": 25,
+"user_gamma": 0.99
+}

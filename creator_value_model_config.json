@@ -1,0 +1,16 @@
+{
+"creator_feature_size": 1,
+"creator_id_embedding_size": 32,
+"document_feature_size": 10,
+"hidden_sizes": [
+32,
+32,
+16
+],
+"lr": 0.0007,
+"model_path": "ckpt/creator",
+"num_creators": 10,
+"regularization_coeff": null,
+"rnn_type": "LSTM",
+"trajectory_length": 1600
+}
