@@ -309,6 +309,7 @@ class Creator:
       self.satisfaction -= self.no_recommendation_penalty
 
     # Update creator viability.
+    print("satisfaction ", self.satisfaction)
     self.update_viability()
     if not self.viable:
       action = 'leave'
@@ -322,6 +323,7 @@ class Creator:
     self.viable = (
         self.saturated_satisfaction(self.satisfaction) >
         self.viability_threshold)
+#print("self.viability_threshold", self.viability_threshold)
 
   def saturated_satisfaction(self, satisfaction):
     """Log(1+x) to saturate absolute satisfaction noting diminishing returns.

@@ -203,6 +203,7 @@ class RnnValueModel:
         zip(grads, self.value_model.trainable_variables))
     self.train_loss(loss)
     self.train_relative_loss(relative_loss)
+    ###entra qui quando fa il training degli utenti? 
 
   def test_step(self, inputs, targets, masks):
     predictions = self.value_model(inputs)
@@ -213,6 +214,10 @@ class RnnValueModel:
         predictions, targets, sample_weight=relative_loss_weights)
     self.test_loss(loss)
     self.test_relative_loss(relative_loss)
+
+  def train_step_cp_fair(self, inputs, targets, masks):
+      #modifies the cp utilities -> check how can be done with the minimization as it is done in the paper
+      print("ciao")
 
   def save(self):
     save_path = self.manager.save()

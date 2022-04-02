@@ -202,7 +202,7 @@ false
 ],
 "resample_documents": true,
 "sampling_space": "unit ball",
-"slate_size": 1,
+"slate_size": 4,
 "topic_dim": 10,
 "user_initial_satisfaction": [
 10.0,

@@ -136,7 +136,6 @@ def learn(env_config, user_value_model_config, creator_value_model_config,
   for epoch in range(exp_config['epochs']):
     print("epochs", epoch)
 
-
     num_users = []  # Shape (sum(run_trajectory_length)).
     num_creators = []  # Shape (sum(run_trajectory_length)).
     num_documents = []  # Shape (sum(run_trajectory_length)).
@@ -335,9 +334,9 @@ def lorenz_curve(start_satisfaction_arr, end_satisfaction_arr, ax  ):
     #ax = fig.add_subplot(3,4, 1)
     ## scatter plot of Lorenz curve
     ax.scatter(np.arange(X_lorenz.size)/(X_lorenz.size-1), X_lorenz,
-               marker='x', color='red', s=100,  label = "start satisfaction")
+               marker='x', color='red', s=100,  label = "satisfaction at time 0")
     ## line plot of equality
-    ax.plot([0,1], [0,1], color='k')
+    ax.plot([0,1], [0,1], color='k', label = "line of equality")
 
     sorted_arr = end_satisfaction_arr.copy()
     sorted_arr.sort()
@@ -350,9 +349,10 @@ def lorenz_curve(start_satisfaction_arr, end_satisfaction_arr, ax  ):
     #ax = fig.add_subplot(3,4, 2)
     ## scatter plot of Lorenz curve
     ax.scatter(np.arange(X_lorenz.size)/(X_lorenz.size-1), X_lorenz,
-               marker='x', color='darkgreen', s=100, label = "end satisfaction")
+               marker='x', color='darkgreen', s=100, label = "satisfaction at time 50")
     ax.legend()
-
+    ax.set_ylabel("comulative % of satisfaction")
+    ax.set_xlabel("comulative % of content providers")
     ## line plot of equality
     #ax.plot([0,1], [0,1], color='k')
     #fig.savefig('distributionSatisfaction.png', dpi=fig.dpi)
@@ -381,6 +381,9 @@ def plot_viable_creators(agent, viable_creators, experiment, num_interaction, fi
     get_median_satisfaction_t =pd.DataFrame()
     for i in range(num_interaction):
         cp = viable_creators.loc[viable_creators['time'] == i]
+        if i == 0 or (i == num_interaction/2) or i == num_interaction -1 :
+            for cr in cp["creators"]:
+                print(cr.create_observation()["creator_id"])
         cp = cp["creator_satisfaction"]
         x = 10 - len(cp)
         d = pd.Series(0, index=np.arange(x))
@@ -635,14 +638,14 @@ def plot_cr_topic_preference_over_time(agent, viable_creators, actor, timestamps
 
 
 
-    print(len(viable_creators[actor].unique()))
+    #print(len(viable_creators[actor].unique()))
     n = 0
     for cr in viable_creators[actor].unique():
         n += 1
         ax = fig.add_subplot(5,2, n)
         taking_time = len(np.vstack(viable_creators.loc[viable_creators[actor] == cr]['time']))
         #print(viable_creators.loc[viable_creators[actor] == cr])
-        print("time", taking_time)
+        #print("time", taking_time)
         x = np.arange(taking_time)
         pp = np.vstack(viable_creators.loc[viable_creators[actor] == cr]['topic_preference'])
         #print(actor , pp)
@@ -677,7 +680,7 @@ def plot_cr_topic_preference_over_time(agent, viable_creators, actor, timestamps
             ax.set_title("Ecoagent topic preference of " + actor + ": " + str(cr.create_observation()["creator_id"]))
           else:
             ax.set_title("Ecoagent topic preference of " + actor + ": " + str(cr.get_user_id()))
-        print(num_interaction)
+        #print(num_interaction)
         ax.set_xlim(0, num_interaction)
         ax.set_ylim(0, 1)
         ax.set_ylabel("Distribution")
@@ -839,6 +842,9 @@ def save_plot_to_pdf(fig1, fig2, pdf):
 
 
 #### END OF RANDOM AGENT
+def learn_fair(env_config, user_value_model_config, creator_value_model_config, actor_model_config, exp_config):
+    print("hello")
+
 
 def analyze_independent_experiment(env_config, user_value_model_config, creator_value_model_config, actor_model_config, exp_config, interaction_vector,  FLAGS, user_ckpt_save_dir, creator_ckpt_save_dir):
     experiment = 1;
@@ -887,8 +893,8 @@ def analyze_independent_experiment(env_config, user_value_model_config, creator_
 
         plot_viable_creators("EcoAgent ", viable_creators_EcoAgent, experiment, n, fig6, fig7,fig8 )
         fig6.savefig('viable_creators_EcoAgent.png', dpi=fig.dpi)
-        fig7.savefig('mean.png', dpi=fig.dpi)
-        fig8.savefig('median.png', dpi=fig.dpi)
+        #fig7.savefig('mean.png', dpi=fig.dpi)
+        #fig8.savefig('median.png', dpi=fig.dpi)
 
         experiment = experiment + 4
         user_value_model_config = reset_user_model(env_config,  FLAGS, user_ckpt_save_dir)
@@ -979,7 +985,7 @@ def main(unused_argv):
       'user_model_seed':
           list(range(num_users)),
       'slate_size':
-          1,
+          4,
       # Hyperparameters for creators and documents.
       'num_creators':
           num_creators,
@@ -1013,7 +1019,8 @@ def main(unused_argv):
       'batch_size': FLAGS.batch_size,
       'summary_frequency': FLAGS.summary_frequency,
   }
-  ckpt_save_dir = os.path.join(FLAGS.logdir, 'ckpt/')
+  #ckpt_save_dir = os.path.join(FLAGS.logdir, 'ckpt/')
+  ckpt_save_dir = os.path.join(FLAGS.logdir, 'ckpt_fair/')
   user_ckpt_save_dir = os.path.join(ckpt_save_dir, 'user')
   creator_ckpt_save_dir = os.path.join(ckpt_save_dir, 'creator')
   actor_ckpt_save_dir = os.path.join(ckpt_save_dir, 'actor')
@@ -1087,9 +1094,10 @@ def main(unused_argv):
     f.write(json.dumps(exp_config, sort_keys=True, indent=0))
 
   #training and experiment with EcoAgent
+  #learn_fair(env_config, user_value_model_config, creator_value_model_config, actor_model_config, exp_config)
 
   #learn(env_config, user_value_model_config, creator_value_model_config, actor_model_config, exp_config)
-  analyze_independent_experiment(env_config, user_value_model_config, creator_value_model_config, actor_model_config, exp_config, [50,50], FLAGS, user_ckpt_save_dir, creator_ckpt_save_dir)
+  analyze_independent_experiment(env_config, user_value_model_config, creator_value_model_config, actor_model_config, exp_config, [1500], FLAGS, user_ckpt_save_dir, creator_ckpt_save_dir)
 
  ### Training and experiment with Random Agent
  #learn_RandomAgent(env_config, user_value_model_config, creator_value_model_config, exp_config)
