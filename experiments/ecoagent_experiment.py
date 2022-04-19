@@ -74,7 +74,7 @@ flags.DEFINE_string(
 )
 
 # Runner configs.
-flags.DEFINE_integer('nsteps', 1600, 'Maximum length of a trajectory.')
+flags.DEFINE_integer('nsteps', 1500, 'Maximum length of a trajectory.') # 1600
 flags.DEFINE_float('user_gamma', 0.99, 'Discount factor for user utility.')
 flags.DEFINE_float('creator_gamma', 0.99,
                    'Discount factor for creator utility.')
@@ -174,6 +174,7 @@ def learn(env_config, user_value_model_config, creator_value_model_config,
             inputs, label, user_utility / random_user_accumulated_reward,
             social_reward / random_creator_accumulated_reward)
 
+
       for batch_data in experience_replay.user_data_generator(
           exp_config['batch_size']):
         user_value_model.train_step(*batch_data)
@@ -181,7 +182,7 @@ def learn(env_config, user_value_model_config, creator_value_model_config,
           exp_config['batch_size'],
           creator_id_embedding_size=creator_value_model
           .creator_id_embedding_size):
-        creator_value_model.train_step(*batch_data)
+        creator_value_model.train_step(*batch_data, "aaaa")
 
     sum_user_normalized_accumulated_reward = np.sum(
         list(experience_replay.user_accumulated_reward.values())
@@ -233,7 +234,7 @@ def learn(env_config, user_value_model_config, creator_value_model_config,
     user_value_model.train_loss.reset_states()
     user_value_model.train_relative_loss.reset_states()
     creator_value_model.train_loss.reset_states()
-    creator_value_model.train_reEcoAlative_loss.reset_states()
+    creator_value_model.train_relative_loss.reset_states()
     actor_model.train_loss.reset_states()
     actor_model.train_utility_loss.reset_states()
     actor_model.train_entropy_loss.reset_states()
@@ -842,8 +843,181 @@ def save_plot_to_pdf(fig1, fig2, pdf):
 
 
 #### END OF RANDOM AGENT
+
 def learn_fair(env_config, user_value_model_config, creator_value_model_config, actor_model_config, exp_config):
-    print("hello")
+    """Train and test user_value_model and creator_value_model with random agent."""
+
+    # Random agent normalization.
+    random_user_accumulated_reward = FLAGS.random_user_accumulated_reward
+    random_creator_accumulated_reward = FLAGS.random_creator_accumulated_reward
+
+    env = environment.create_gym_environment(env_config)
+    user_value_model = value_model.UserValueModel(**user_value_model_config)
+    creator_value_model = value_model.CreatorValueModel(
+        **creator_value_model_config)
+    actor_model = agent.PolicyGradientAgent(
+        user_model=user_value_model,
+        creator_model=creator_value_model,
+        **actor_model_config)
+
+    runner_ = runner.Runner(env, actor_model, exp_config['nsteps'])
+
+    experience_replay = data_utils.ExperienceReplay(exp_config['nsteps'],
+                                                    env_config['topic_dim'],
+                                                    env_config['num_candidates'],
+                                                    exp_config['user_gamma'],
+                                                    exp_config['creator_gamma'])
+
+    train_summary_dir = os.path.join(FLAGS.logdir, 'train/')
+    #os.makedirs(train_summary_dir)
+    if( not os.path.isdir(train_summary_dir) ):
+        #shutil.rmtree(train_summary_dir)
+        os.makedirs(train_summary_dir)
+
+    train_summary_writer = tf.summary.create_file_writer(train_summary_dir)
+    fig = plt.figure(figsize=(30,15))
+    # Train, save.
+
+    # For each epoch, EcoAgent interacts with 10 new environments as set up above. The environment will be rolled out for 20 steps. At each time step of one rollout, all users receive recommendations simultaneously, and the environment updates all users’ and content providers’ states.
+    for epoch in range(exp_config['epochs']):
+      print("epochs", epoch)
+
+      num_users = []  # Shape (sum(run_trajectory_length)).
+      num_creators = []  # Shape (sum(run_trajectory_length)).
+      num_documents = []  # Shape (sum(run_trajectory_length)).
+
+      topic_distribution = []
+      topic_sum = []
+
+      selected_probs = []  # Shape (sum(run_trajectory_length)).
+      policy_probs = []  # Shape (sum(run_trajectory_length), num_candidates).
+      # Collect training data.
+      for _ in range(exp_config['epoch_runs']):                   #simulation
+        (user_dict, creator_dict, preprocessed_user_candidates, _, probs, _,
+        _, topic_distribution, topic_sum, viable_creators, viable_users ) = runner_.run()
+
+        experience_replay.update_experience(
+            user_dict,
+            creator_dict,
+            preprocessed_user_candidates,
+            update_actor=True)
+        num_users.append(runner_.env.num_users)
+
+        num_creators.append(runner_.env.num_creators)      #num viable creator at the end of the simulation
+        num_documents.append(runner_.env.num_documents)
+        selected_probs.extend(probs['selected_probs'])
+        policy_probs.extend(probs['policy_probs'])
+       # print(num_users, num_creators)
+        #topic_distribution.append(runner_.env.topic_documents)  #topic distribution at the end of the experiment, I want to analyse the document distribution at each step of the simulation
+
+      #print(np.array(topic_distribution).shape)
+
+      # Update user and content creators state model with training data.
+      for _ in range(exp_config['epoch_trains']):
+        for (inputs, label, user_utility, social_reward, _) in experience_replay.actor_data_generator(creator_value_model, batch_size=exp_config['batch_size']):
+          actor_model.train_step(
+              inputs, label, user_utility / random_user_accumulated_reward,
+              social_reward / random_creator_accumulated_reward)
+
+
+
+        for batch_data in experience_replay.user_data_generator(
+            exp_config['batch_size']):
+          tmp  = batch_data
+          #user_value_model.train_step(*batch_data)
+          user_value_model.train_step(*batch_data, "user")
+
+        for batch_data in experience_replay.creator_data_generator(
+            exp_config['batch_size'],
+            creator_id_embedding_size=creator_value_model
+            .creator_id_embedding_size):
+          creator_value_model.train_step(*batch_data, "creator")
+
+      sum_user_normalized_accumulated_reward = np.sum(
+          list(experience_replay.user_accumulated_reward.values())
+      ) / experience_replay.num_runs / random_user_accumulated_reward
+
+      sum_creator_normalized_accumulated_reward = np.sum(
+          list(experience_replay.creator_accumulated_reward.values())
+      ) / experience_replay.num_runs / random_creator_accumulated_reward
+
+      overall_scaled_accumulated_reward = (
+          (1 - actor_model_config['social_reward_coeff']) *
+          sum_user_normalized_accumulated_reward +
+          actor_model_config['social_reward_coeff'] *
+          sum_creator_normalized_accumulated_reward)
+      # Write summary statistics for tensorboard.
+      if epoch % exp_config['summary_frequency'] == 0:
+        ## Value model and environment summaries.
+        training_utils.save_summary(train_summary_writer, user_value_model,
+                                    creator_value_model, experience_replay,
+                                    num_users, num_creators, num_documents, topic_distribution,
+                                    policy_probs, selected_probs,
+                                    overall_scaled_accumulated_reward, epoch)
+        ## Actor model summaries.
+        with train_summary_writer.as_default():
+          tf.summary.scalar(
+              'actor_loss', actor_model.train_loss.result(), step=epoch)
+
+          social_rewards = np.array(
+              experience_replay.actor_creator_uplift_utilities)
+          tf.summary.scalar('social_rewards', np.mean(social_rewards), step=epoch)
+          actor_label_weights = (
+              (1 - actor_model_config['social_reward_coeff']) *
+              np.array(experience_replay.actor_user_utilities) /
+              random_user_accumulated_reward +
+              actor_model_config['social_reward_coeff'] * social_rewards /
+              random_creator_accumulated_reward)
+          tf.summary.scalar(
+              'actor_label_weights', np.mean(actor_label_weights), step=epoch)
+          #document distribution for tensorboard
+          """
+              with train_summary_writer.as_default():
+                  for step in range(20):
+                  for topic in range(10):
+                      st = 'topic_distribution epoch  ' + str(epoch)
+                      tf.summary.scalar(
+                          st , np.array(topic_distribution)[step,topic], step=step)"""
+
+      # Reset.
+      user_value_model.train_loss.reset_states()
+      user_value_model.train_relative_loss.reset_states()
+      creator_value_model.train_loss.reset_states()
+      creator_value_model.train_relative_loss.reset_states()
+      actor_model.train_loss.reset_states()
+      actor_model.train_utility_loss.reset_states()
+      actor_model.train_entropy_loss.reset_states()
+      experience_replay.reset()
+      if(epoch == 0):
+        ax = fig.add_subplot(3,5, 1)
+
+        x = np.arange(20)
+        for topic in range(10):
+          ax.plot(x, np.array(topic_distribution)[:,topic], label = str(topic))
+          ax.set_title("epoch " + str(epoch))
+          ax.set_ylabel("distribution")
+          ax.set_xlabel("interaction step")
+          ax.legend()
+
+
+      if epoch >= exp_config['start_save'] and exp_config[
+          'save_frequency'] > 0 and epoch % exp_config['save_frequency'] == 0:
+        # Save model.
+        user_value_model.save()
+        creator_value_model.save()
+        actor_model.save()
+        #visualization of topic distribution over time
+        ax = fig.add_subplot(3,5, int(epoch/25)+1)
+
+        x = np.arange(20)
+        for topic in range(10):
+          ax.plot(x, np.array(topic_distribution)[:,topic], label = str(topic))
+          ax.set_title("epoch " + str(epoch))
+          ax.set_ylabel("distribution")
+          ax.set_xlabel("interaction step")
+          ax.legend()
+
+      #plt.savefig("topic_distribution_over_time_EcoAgent.png")
 
 
 def analyze_independent_experiment(env_config, user_value_model_config, creator_value_model_config, actor_model_config, exp_config, interaction_vector,  FLAGS, user_ckpt_save_dir, creator_ckpt_save_dir):
@@ -906,7 +1080,7 @@ def analyze_independent_experiment(env_config, user_value_model_config, creator_
     figy = plt.figure(figsize=(50,25))
 
     figy.suptitle("Analysis of Long Term Experimemnt over different timesta mps " + str(n) , fontsize=13)
-    #analize in different timestamps the plot for the long term experiment, so something like This
+    #analyze in different timestamps the plot for the long term experiment, so something like This
     half = int(interaction_vector[-1]/2)
     print(half)
     plot_topic_characteristic_per_timestamp("EcoAgent ", topic_sum_EcoAgent, [half], 1 , n, figy.add_subplot(1,2, 1))     #50, 100
@@ -1020,7 +1194,7 @@ def main(unused_argv):
       'summary_frequency': FLAGS.summary_frequency,
   }
   #ckpt_save_dir = os.path.join(FLAGS.logdir, 'ckpt/')
-  ckpt_save_dir = os.path.join(FLAGS.logdir, 'ckpt_fair/')
+  ckpt_save_dir = os.path.join(FLAGS.logdir, 'ckpt/')
   user_ckpt_save_dir = os.path.join(ckpt_save_dir, 'user')
   creator_ckpt_save_dir = os.path.join(ckpt_save_dir, 'creator')
   actor_ckpt_save_dir = os.path.join(ckpt_save_dir, 'actor')
@@ -1097,7 +1271,7 @@ def main(unused_argv):
   #learn_fair(env_config, user_value_model_config, creator_value_model_config, actor_model_config, exp_config)
 
   #learn(env_config, user_value_model_config, creator_value_model_config, actor_model_config, exp_config)
-  analyze_independent_experiment(env_config, user_value_model_config, creator_value_model_config, actor_model_config, exp_config, [1500], FLAGS, user_ckpt_save_dir, creator_ckpt_save_dir)
+  analyze_independent_experiment(env_config, user_value_model_config, creator_value_model_config, actor_model_config, exp_config, [300], FLAGS, user_ckpt_save_dir, creator_ckpt_save_dir)
 
  ### Training and experiment with Random Agent
  #learn_RandomAgent(env_config, user_value_model_config, creator_value_model_config, exp_config)

@@ -131,7 +131,6 @@ class Runner:
 
     # Simulation.
     for t in range(self.nsteps):
-      #print("step: ", t)
       previous_docs = list(obs['doc'].values())
       previous_creators = obs['creator']
       """l = []
@@ -162,6 +161,7 @@ class Runner:
           #item = pd.DataFrame.from_dict([{'time': t, 'creators': cr, 'documents': cr.documents.copy(), 'doc_lenght':len(cr.documents), "topic_preference": cr.create_observation()['creator_topic_preference']}])
           item = pd.DataFrame.from_dict([{'time': t, 'creators': cr, 'documents': cr.documents.copy(), 'doc_lenght':len(cr.documents), "topic_preference": cr.create_observation()['creator_topic_preference'], "creator_satisfaction": cr.create_observation()['creator_satisfaction']}])
           cr_viable_per_t = cr_viable_per_t.append(item)
+
       #print(self.env.users)
       for user in self.env.users[:10]:
           item = pd.DataFrame.from_dict([{'time': t, 'users': user,  "topic_preference": user.get_user_topic_preference()}])
@@ -214,7 +214,11 @@ class Runner:
 
 
       # Step the environment.
-      obs, _, done, _ = self.env.step(slates)
+      #TODOs: new approach: check the state of the cps with the current slate, if one of them is about to leave re-process the slate in order to let him stay.
+      #print("slates", slates)
+      obs, _, done, _ = self.env.step(slates, t)
+      #obs, _, done, _ = self.env.step_fair(slates)
+
       #print("obs", len(obs["doc"]))
 
       # Record if user leaves.
@@ -282,6 +286,9 @@ class Runner:
     preprocessed_user_candidates = [
         user_embedding_states, creator_embedding_states, candidate_documents
     ]
+
+    #for cr in cr_viable_per_t["creators"]:
+    #    print("cr_viable_per_t", cr_viable_per_t.loc[cr_viable_per_t["creators"] == cr])
 
 
     #print("creator_dict", creator_dict["creator_obs"], creator_dict["creator_actions"])

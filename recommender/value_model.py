@@ -149,7 +149,12 @@ class RnnValueModel:
     output = last_rnn_output
     for layer in self.embedding_layers:
       output = layer(output)
+    print("output", output)
     return output
+
+  def predict_viability_likelihood(self, inputs, mask=None, initial_state=None):
+      print("predict viability likelihood of creator #n given history")
+
 
   def get_embedding(self, inputs, mask=None, initial_state=None):
     """Get embedding hidden states for given history.
@@ -188,11 +193,13 @@ class RnnValueModel:
     else:
       raise NotImplementedError('Only support LSTM/GRU cells.')
 
-  def train_step(self, inputs, targets, masks):
+  def train_step(self, inputs, targets, masks, st):
+    #print("printing st ", st )
     """Batch train."""
     self.ckpt.step.assign_add(1)
     with tf.GradientTape() as tape:
       predictions = self.value_model(inputs, training=True)
+      #print("predicting", predictions)
       loss = self.loss_object(predictions, targets, sample_weight=masks)
       relative_loss_weights = masks / (
           tf.maximum(tf.abs(tf.squeeze(targets, -1)), 1e-7))
@@ -203,7 +210,7 @@ class RnnValueModel:
         zip(grads, self.value_model.trainable_variables))
     self.train_loss(loss)
     self.train_relative_loss(relative_loss)
-    ###entra qui quando fa il training degli utenti? 
+    ###entra qui quando fa il training degli utenti?
 
   def test_step(self, inputs, targets, masks):
     predictions = self.value_model(inputs)

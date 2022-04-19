@@ -236,6 +236,7 @@ class FairAgent(AbstractAgent):
     label_weights = (
         1 - self.social_reward_coeff
     ) * user_utilities + self.social_reward_coeff * social_rewards                               #this is the policy we'd like to change
+    #print("LABEL WEIGHTS", label_weights)
     with tf.GradientTape() as tape:
       logits = self.actor_model(inputs, training=True)
       p = tf.nn.softmax(logits=logits)
@@ -465,6 +466,8 @@ class PolicyGradientAgent(AbstractAgent):
     label_weights = (
         1 - self.social_reward_coeff
     ) * user_utilities + self.social_reward_coeff * social_rewards
+    #print("LABEL WEIGHTS", label_weights)
+
     with tf.GradientTape() as tape:
       logits = self.actor_model(inputs, training=True)
       p = tf.nn.softmax(logits=logits)

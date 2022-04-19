@@ -37,6 +37,16 @@ def _get_utilities(rewards, gamma):
       itertools.accumulate(reversed_rewards, lambda x, y: x * gamma + y))
   return np.array(reversed_utilities[::-1])
 
+def _get_viability_likelihood(satisfaction ):
+    """Get viability likelihood based on observed actions.
+                        features                                                    label
+    needs reward if recommended, reward if not recommended, satifaction -> action
+    """
+    print("_get_viability_likelihood")
+    #return  ( P(S^c_t >= Theta |a_t) And P(a_t) ) / P ( a_t)     # where a_t is the item that as been recommended
+
+
+
 
 def get_user_hidden_state(user_dict, user_model):
   """Get user hidden states based on user history.
@@ -428,11 +438,16 @@ class ExperienceReplay:
       c_key = f'{self.num_runs}_{c_id}'
 
       c_rewards = creator_rewards[c_id]
+      #print("c_rewards", c_rewards)
       self.creator_current_rewards[c_key] = np.array(c_rewards)
       self.creator_accumulated_reward[c_key] = np.sum(c_rewards)
       self.creator_is_saturation[c_key] = creator_is_saturation[c_id]
       # Calculate creator forward discounted utility.
-      c_utilities = _get_utilities(c_rewards, self.creator_gamma)
+      c_utilities = _get_utilities(c_rewards, self.creator_gamma)       #utilities of creator #n over the whole simulation
+      print("utilities", c_utilities)
+
+      #here a need to calculate also the viability probability of creator #n (or overall viability probability?) over the whole simulation
+      #c_viability_likelihood = _get_viability_likelihood(creator_dict[satisfaction] )
 
       # Format feedback from users and recommender.
       num_recs = [[len(rec)] for rec in creator_recommended_docs[c_id]]
@@ -471,6 +486,7 @@ class ExperienceReplay:
                                               ] * pad_length
       c_satisfaction = np.array(
           [c_obs['creator_satisfaction'] for c_obs in creator_obs[c_id]])
+      #print("c_satisfaction", c_satisfaction)
       c_previous_satisfaction = np.zeros((self.trajectory_length, 1))
       c_previous_satisfaction[:creator_trajectory_length, 0] = c_satisfaction
       mask = np.zeros(self.trajectory_length)
@@ -545,6 +561,8 @@ class ExperienceReplay:
     creator_user_rewards = np.array(list(self.creator_user_rewards.values()))
     creator_saturated_satifaction = np.array(
         list(self.creator_previous_satisfaction.values()))
+    print("creator_saturated_satifaction", len(creator_saturated_satifaction))
+
     creator_id = np.array([[int(c_key.split('_')[1])] * self.trajectory_length
                            for c_key in self.creator_num_recs.keys()])
     creator_masks = np.array(list(self.creator_masks.values()))
@@ -606,6 +624,10 @@ class ExperienceReplay:
     ]
     if creator_embedding_model.creator_id_embedding_size > 0:
       rec_inputs.append(actor_click_creator_id)
+    print("actor_user_rewards", actor_user_rewards)
+    print("actor_user_clicked_docs", actor_user_clicked_docs)
+    print("actor_click_creator_satisfaction", actor_click_creator_satisfaction)
+
     ul_rec_creator_utilities = creator_embedding_model.predict_value(
         rec_inputs, initial_state=initial_state, mask=mask)
 
@@ -617,15 +639,26 @@ class ExperienceReplay:
         np.zeros((num_samples, self.trajectory_length, self.doc_feature_size)),
         actor_click_creator_satisfaction,
     ]
+    print("not actor_click_creator_satisfaction", actor_click_creator_satisfaction)
+
+
     if creator_embedding_model.creator_id_embedding_size > 0:
       rec_inputs.append(actor_click_creator_id)
     ul_norec_creator_utilities = creator_embedding_model.predict_value(
         rec_inputs, initial_state=initial_state, mask=mask)
 
+    print("ul_rec_creator_utilities", ul_rec_creator_utilities)
+    print("ul_norec_creator_utilities", ul_norec_creator_utilities)
+
     # Calculate social reward.
     actor_creator_uplift_utilities = ul_rec_creator_utilities - ul_norec_creator_utilities
     self.actor_creator_uplift_utilities = np.array(
         actor_creator_uplift_utilities).flatten()
+    print("actor_creator_uplift_utilities", actor_creator_uplift_utilities)
+
+  def get_click_creator_uplift_viability(self, creator_embedding_model):
+      print(" get creator uplift viability ")
+
 
   def actor_data_generator(self, creator_embedding_model, batch_size=32):
     """Generate batch data for actor agent with user and creator embedding models.
@@ -652,7 +685,7 @@ class ExperienceReplay:
     Yields:
       (inputs, labels, rewards): Mini-batch training data for actor agent.
     """
-
+    print("SELF ", self)
     if self.need_calculate_creator_uplift_utility:  # pylint: disable=g-explicit-length-test
       self.get_click_creator_uplift_utility(creator_embedding_model)
       self.need_calculate_creator_uplift_utility = False

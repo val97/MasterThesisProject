@@ -75,7 +75,7 @@ class UserState(user.AbstractUserState):
     self.topic_dim = topic_dim
     self.topic_preference = topic_preference
     self.satisfaction = initial_satisfaction
-
+    self.previous_satisfaction = initial_satisfaction
   def create_observation(self):
     """Returns user id since user's state is not observable."""
     # User state (topic_preference) is not observable.
@@ -200,12 +200,16 @@ class UserModel(user.AbstractUserModel):
     Returns:
       responses: A list of Response objects, one for each document.
     """
+    #print("self", documents)
     responses = [self._response_model_ctor() for _ in documents]
 
     # Score each slate item and select one.
     self.choice_model.score_documents(
         self._user_state, [doc.create_observation() for doc in documents])
+    scores = self.choice_model.scores
+    #print("scores", scores)
     selected_index = self.choice_model.choose_item()
+    #print("selected", selected_index)
     # `choice_model.choose_item()` can return None if the "None of the above"
     # option is given sufficient weight to be chosen, (see e.g.,
     # choice_model.NormalizableChoiceModel.choose_item which always adds an

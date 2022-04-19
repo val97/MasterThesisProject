@@ -158,7 +158,98 @@ class EcosystemEnvironment(environment.MultiUserEnvironment):
     return self._document_sampler.number_of_topic_documents
 
 
-  def step(self, slates):
+  def step(self, slates, t):
+    """Executes the action, returns next state observation and reward.
+
+    Args:
+      slates: A list of slates, where each slate is an integer array of size
+        slate_size, where each element is an index into the set of
+        current_documents presented.
+
+    Returns:
+      user_obs: A list of gym observation representing all users' next state.
+      doc_obs: A list of observations of the documents.
+      responses: A list of AbstractResponse objects for each item in the slate.
+      done: A boolean indicating whether the episode has terminated. An episode
+        is terminated whenever there is no user or creator left.
+    """
+
+    assert (len(slates) == self.num_users
+           ), 'Received unexpected number of slates: expecting %s, got %s' % (
+               self._slate_size, len(slates))
+    for user_id in slates:
+      assert (len(slates[user_id]) <= self._slate_size
+             ), 'Slate for user %s is too large : expecting size %s, got %s' % (
+                 user_id, self._slate_size, len(slates[user_id]))
+
+    all_documents = dict()  # Accumulate documents served to each user.
+    all_responses = dict(
+    )  # Accumulate each user's responses to served documents.
+    for user_model in self.user_model:
+      if not user_model.is_terminal():
+        user_id = user_model.get_user_id()
+        # Get the documents associated with the slate.
+        doc_ids = list(self._current_documents)  # pytype: disable=attribute-error
+        mapped_slate = [doc_ids[x] for x in slates[user_id]]
+        documents = self._candidate_set.get_documents(mapped_slate)
+        # Acquire user response and update user states.
+        responses = user_model.update_state(documents)
+        all_documents[user_id] = documents
+        all_responses[user_id] = responses
+
+    def flatten(list_):
+      return list(itertools.chain(*list_))
+
+    # Update the creators' state.
+    creator_response, modify_slate = self._document_sampler.update_state(
+        flatten(list(all_documents.values())),
+        flatten(list(all_responses.values())),t)
+    if(modify_slate):
+        print("Here I'm manually modifing the slate ")
+        #do it tomorrow
+
+    # Obtain next user state observation.
+    self.user_terminates = {
+        u_model.get_user_id(): u_model.is_terminal()
+        for u_model in self.user_model
+    }
+    all_user_obs = dict()
+    for user_model in self.user_model:
+      if not user_model.is_terminal():
+        all_user_obs[user_model.get_user_id()] = user_model.create_observation()
+
+    # Obtain next creator state observation.
+    all_creator_obs = dict()
+    for creator_id, creator_model in self._document_sampler.viable_creators.items(
+    ):
+      all_creator_obs[creator_id] = creator_model.create_observation()
+    #print("all_creator_obs", all_creator_obs)
+
+    # Check if reaches a terminal state and return.
+    # Terminal if there is no user or creator on the platform.
+    done = self.num_users <= 0 or self.num_creators <= 0
+
+    # Optionally, recreate the candidate set to simulate candidate
+    # generators for the next query.
+    if self.num_creators > 0:
+      if self._resample_documents:
+        # Resample the candidate set from document corpus for the next time
+        # step recommendation.
+        # Candidate set is provided to the agent to select documents that will
+        # be recommended to the user.
+        self._do_resample_documents()
+
+      # Create observation of candidate set.
+      self._current_documents = collections.OrderedDict(
+          self._candidate_set.create_observation())
+    else:
+      self._current_documents = collections.OrderedDict()
+    #print("environment resampled doc", self._current_documents)
+#get  self._current_documents doc_lenght
+    return (all_user_obs, all_creator_obs, self._current_documents,
+            all_responses, self.user_terminates, creator_response, done)
+
+  def step_fair(self, slates):
     """Executes the action, returns next state observation and reward.
 
     Args:
@@ -205,6 +296,8 @@ class EcosystemEnvironment(environment.MultiUserEnvironment):
         flatten(list(all_documents.values())),
         flatten(list(all_responses.values())))
 
+    print("creator_response", creator_response)
+
     # Obtain next user state observation.
     self.user_terminates = {
         u_model.get_user_id(): u_model.is_terminal()
@@ -217,9 +310,12 @@ class EcosystemEnvironment(environment.MultiUserEnvironment):
 
     # Obtain next creator state observation.
     all_creator_obs = dict()
-    for creator_id, creator_model in self._document_sampler.viable_creators.items(
-    ):
+    for creator_id, creator_model in self._document_sampler.viable_creators.items():
       all_creator_obs[creator_id] = creator_model.create_observation()
+
+    #print("creator_model.create_observation()", creator_model.create_observation())
+
+    #print("all_creator_obs", all_creator_obs)
 
     # Check if reaches a terminal state and return.
     # Terminal if there is no user or creator on the platform.
@@ -241,7 +337,7 @@ class EcosystemEnvironment(environment.MultiUserEnvironment):
     else:
       self._current_documents = collections.OrderedDict()
     #print("environment resampled doc", self._current_documents)
-#get  self._current_documents doc_lenght
+  #get  self._current_documents doc_lenght
     return (all_user_obs, all_creator_obs, self._current_documents,
             all_responses, self.user_terminates, creator_response, done)
 
@@ -358,9 +454,9 @@ class EcosystemGymEnv(recsim_gym.RecSimGymEnv):
         doc=doc_obs,
         total_doc_number=self.num_documents)
 
-  def step(self, action):
+  def step(self, action, t):
     (user_obs, creator_obs, doc_obs, user_response, user_terminate,
-     creator_response, done) = self._environment.step(action)
+     creator_response, done) = self._environment.step(action, t)
     obs = dict(
         user=user_obs,
         creator=creator_obs,
@@ -380,6 +476,32 @@ class EcosystemGymEnv(recsim_gym.RecSimGymEnv):
     #print(self.topic_documents)
 
     return obs, reward, done, info
+
+  ##TO be removed eventually
+  def step_fair(self, action):
+    #print("action", action)
+    (user_obs, creator_obs, doc_obs, user_response, user_terminate,
+     creator_response, done) = self._environment.step_fair(action)
+    obs = dict(
+        user=user_obs,
+        creator=creator_obs,
+        doc=doc_obs,
+        user_terminate=user_terminate,
+        total_doc_number=self.num_documents,
+        user_response=user_response,
+        creator_response=creator_response)
+
+    # Extract rewards from responses.
+    reward = self._reward_aggregator(user_response)
+    info = self.extract_env_info()
+
+    #logging.info(
+#        'Environment steps with aggregated %f reward. There are %d viable users, %d viable creators and %d viable documents on the platform.',
+#        reward, self.num_users, self.num_creators, self.num_documents)
+    #print(self.topic_documents)
+
+    return obs, reward, done, info
+
 
   @property
   def num_creators(self):

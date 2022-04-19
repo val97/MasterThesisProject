@@ -4,7 +4,7 @@
 "epoch_runs": 5,
 "epoch_trains": 1,
 "epochs": 300,
-"nsteps": 1600,
+"nsteps": 1500,
 "save_frequency": 25,
 "start_save": 25,
 "summary_frequency": 25,

@@ -309,7 +309,7 @@ class Creator:
       self.satisfaction -= self.no_recommendation_penalty
 
     # Update creator viability.
-    print("satisfaction ", self.satisfaction)
+    #print("satisfaction ", self.satisfaction)
     self.update_viability()
     if not self.viable:
       action = 'leave'
@@ -317,13 +317,14 @@ class Creator:
         self.satisfaction) - self.saturated_satisfaction(old_satisfaction)
     return doc_count, (action, creator_reward)
 
+
+
   def update_viability(self):
     # Creator is no longer viable if her saturated satisfaction is below the
     # viability_threshold.
     self.viable = (
         self.saturated_satisfaction(self.satisfaction) >
         self.viability_threshold)
-#print("self.viability_threshold", self.viability_threshold)
 
   def saturated_satisfaction(self, satisfaction):
     """Log(1+x) to saturate absolute satisfaction noting diminishing returns.
@@ -671,7 +672,8 @@ class DocumentSampler(document.AbstractDocumentSampler):
       # Sampling without replacement.
       return np.random.choice(documents, size=size, replace=False)
 
-  def update_state(self, documents, responses):
+  def update_state(self, documents, responses, t ):
+    modify_slate = False
     creators_popularity = {
         creator_id: dict(documents=[], user_responses=[])
         for creator_id in self.viable_creators.keys()
@@ -684,11 +686,15 @@ class DocumentSampler(document.AbstractDocumentSampler):
     for creator_id, creator_popularity in creators_popularity.items():
       self.doc_count, response = self.viable_creators[creator_id].update_state(
           doc_count=self.doc_count, **creator_popularity)
+      if response[0] == "leave":
+          print("creator ", creator_id, "is leaving the platform at time ", t)
+          print("so it's needed to redo the slate")
+          modify_slate = True
       creator_response[creator_id] = response
       if not self.viable_creators[creator_id].viable:
         del self.viable_creators[creator_id]
-
-    return creator_response
+    #print("creator_response", creator_response)
+    return creator_response, modify_slate
 
   @property
   def num_viable_creators(self):
