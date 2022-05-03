@@ -179,6 +179,7 @@ class RnnValueModel:
          are useful for initializing the rnn layer in creator_value_model for
          uplift modeling.
     """
+    #print("predict", inputs)
     merged_inputs = self.merged_input_model.predict(inputs)
 
     if self.rnn_type == 'LSTM':

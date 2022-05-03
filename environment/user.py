@@ -25,6 +25,7 @@ state transition model, and user response model.
   - user response model: characterizes how the user responds to the recommended
       slate, e.g document choice and engagement/satisfaction level with it.
 """
+import copy
 
 from absl import flags
 from gym import spaces
@@ -75,11 +76,33 @@ class UserState(user.AbstractUserState):
     self.topic_dim = topic_dim
     self.topic_preference = topic_preference
     self.satisfaction = initial_satisfaction
+
     self.previous_satisfaction = initial_satisfaction
+    self.previous_topic_preference = topic_preference
+
+  def restore(self, state):
+      self.user_id = state.user_id
+
+      # Transition hyper-parameters.
+      self.quality_sensitivity =  state.quality_sensitivity
+      self.topic_influence =  state.topic_influence
+      self.observation_noise_std =  state.observation_noise_std
+      self.viability_threshold =  state.viability_threshold
+      self.satisfaction_decay =  state.satisfaction_decay
+
+      # State variables.
+      self.topic_dim =  state.topic_dim
+      self.topic_preference =  state.topic_preference
+      self.satisfaction =  state.satisfaction
+
+      #self.previous_satisfaction =  state.initial_satisfaction
+      #self.previous_topic_preference =  state.topic_preference
+
   def create_observation(self):
     """Returns user id since user's state is not observable."""
     # User state (topic_preference) is not observable.
     return int(self.user_id)
+    #return {"user_id": int(self.user_id), "satisfaction": self.satisfaction}
 
   @staticmethod
   def observation_space():
@@ -278,6 +301,57 @@ class UserModel(user.AbstractUserModel):
       self._user_state.satisfaction -= 1
     return [response.create_observation() for response in responses]
 
+  def simulate_update_state(self, documents):
+    """Update user state and generate user response_observations.
+
+    Use self.simulate_response to generate a list of Response object for each
+    documents.
+
+    User's total satisfaction firstly shrinks by rate satisfaction_decay.
+    If no document is consumed, user's topic preference remains untouched, and
+    the total satisfaction decreases by 1.
+
+    If the user clicks one document, her satisfaction changes by the
+    response.reward, and her topic_preference will be:
+      1. temporal_topic_preference <- topic_preference + topic_influence *
+      response.reward * document.topic.
+      2. normalize the temporal_topic_preference to the topic_preference domain
+      (unit ball),and set it to be the new user.topic_preference.
+    Intuitively, the user topic preference will shift toward the document.topic
+    if the response.reward is positive. Otherwise the user will decrease her
+    preference on the document's topic.
+
+    Args:
+      documents: A list of Document objects in the recommended slate.
+
+    Returns:
+      A list of Response observations for the recommended documents.
+    """
+    responses = self.simulate_response(documents)
+
+    self._user_state.satisfaction *= self._user_state.satisfaction_decay
+    click = False
+    for doc, response in zip(documents, responses):
+      if response.clicked:
+        # Update user's satisfaction based on the clicked document.
+        self._user_state.satisfaction += response.reward
+        # Update user's topic preference based on the clicked document.
+        topic_preference = self._user_state.topic_preference + self._user_state.topic_influence * response.reward * doc.topic
+        # Normalize the topic_preference to the unit ball.
+        topic_preference = topic_preference / np.sqrt(
+            np.sum(topic_preference**2))
+
+        self._user_state.previous_topic_preference = self._user_state.topic_preference
+
+        self._user_state.topic_preference = topic_preference
+        click = True
+        break
+
+    # If no click, user satisfaction decreases by 1.
+    if not click:
+      self._user_state.satisfaction -= 1
+    return [response.create_observation() for response in responses]
+
   def score_document(self, doc_obs):
     return self._user_state.score_document(doc_obs)
 
@@ -289,3 +363,7 @@ class UserModel(user.AbstractUserModel):
 
   def is_terminal(self):
     return self._user_state.satisfaction < self._user_state.viability_threshold
+
+  def restore(self, state):
+    #print(state.create_observation())
+    self._user_state.restore(state._user_state)

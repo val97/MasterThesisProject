@@ -17,10 +17,13 @@
 
 import collections
 import itertools
+import copy
 
 from absl import flags
 from absl import logging
 import numpy as np
+import pandas as pd
+from sklearn import preprocessing
 from recsim import choice_model
 from recsim import document
 from recsim.simulator import environment
@@ -129,6 +132,7 @@ class EcosystemEnvironment(environment.MultiUserEnvironment):
 
     return user_obs, creator_obs, self._current_documents
 
+
   @property
   def num_users(self):
     return len(self.user_model) - np.sum(list(self.user_terminates.values()))
@@ -158,7 +162,7 @@ class EcosystemEnvironment(environment.MultiUserEnvironment):
     return self._document_sampler.number_of_topic_documents
 
 
-  def step(self, slates, t):
+  def step(self, slates, t, approach):
     """Executes the action, returns next state observation and reward.
 
     Args:
@@ -174,6 +178,7 @@ class EcosystemEnvironment(environment.MultiUserEnvironment):
         is terminated whenever there is no user or creator left.
     """
 
+
     assert (len(slates) == self.num_users
            ), 'Received unexpected number of slates: expecting %s, got %s' % (
                self._slate_size, len(slates))
@@ -182,6 +187,7 @@ class EcosystemEnvironment(environment.MultiUserEnvironment):
              ), 'Slate for user %s is too large : expecting size %s, got %s' % (
                  user_id, self._slate_size, len(slates[user_id]))
 
+    print("time t", t)
     all_documents = dict()  # Accumulate documents served to each user.
     all_responses = dict(
     )  # Accumulate each user's responses to served documents.
@@ -190,23 +196,29 @@ class EcosystemEnvironment(environment.MultiUserEnvironment):
         user_id = user_model.get_user_id()
         # Get the documents associated with the slate.
         doc_ids = list(self._current_documents)  # pytype: disable=attribute-error
+        #print("current_documents", len(self._current_documents))
         mapped_slate = [doc_ids[x] for x in slates[user_id]]
         documents = self._candidate_set.get_documents(mapped_slate)
+        #print("documents", documents)
         # Acquire user response and update user states.
         responses = user_model.update_state(documents)
         all_documents[user_id] = documents
         all_responses[user_id] = responses
 
+
     def flatten(list_):
       return list(itertools.chain(*list_))
 
-    # Update the creators' state.
+    # Update the creators' state: calculating the creator reaction to the current slate
     creator_response, modify_slate = self._document_sampler.update_state(
         flatten(list(all_documents.values())),
-        flatten(list(all_responses.values())),t)
+        flatten(list(all_responses.values())),t, approach)
+    #print("time", t)
     if(modify_slate):
-        print("Here I'm manually modifing the slate ")
-        #do it tomorrow
+        print("Here I need to manually modify the slate; this is the current one:  ")
+        print(slates)
+        # get the current slate and modify it a bit
+
 
     # Obtain next user state observation.
     self.user_terminates = {
@@ -249,7 +261,199 @@ class EcosystemEnvironment(environment.MultiUserEnvironment):
     return (all_user_obs, all_creator_obs, self._current_documents,
             all_responses, self.user_terminates, creator_response, done)
 
-  def step_fair(self, slates):
+  def restore_previous_user_state(self, previous_user_state):
+       print("before")
+       for u in previous_user_state:
+           print(u.create_observation())
+       #for u in range(len(self.user_model)):
+          # self.user_model[u].restore(previous_user_state[u])
+       previous_user_state = copy.deepcopy(self.user_model)
+       print("after")
+       for u in previous_user_state:
+           print(u.create_observation())
+
+  #return the cp with highest satisfaction beetween the one recommended at this timestep
+  def get_recommended_cp_with_max_sat(self, cps, recommended):
+      cps = cps.sort_values(by = ["creator_previous_satisfaction"], ascending = False)
+      #print("sorted", cps )
+      for cp in cps["creator_id"]:
+          if cp in recommended:
+              return cp
+
+  #to be moved in utilities
+  def normalize(self, df, column, new_column):
+   #min_value, max_value = df[column].min(), df[column].max()
+   min_value = 0        #min value sat can have
+   max_value =  df[column].max()
+   df[new_column] = (df[column] - min_value) / (max_value - min_value)
+
+   return df
+
+  def scale(self, df, column, new_column):
+    min_max_scaler = preprocessing.MinMaxScaler()
+    df[new_column] = min_max_scaler.fit_transform(df[column].values.astype(float))
+    return df
+
+
+  def rebalance_content_provider_satisfaction(self, previous_cps_state, all_documents_df, creator_response, t ):
+       print("trying to rebalance cp satisfaction, in order to obtain fairness")
+       creator_df = pd.DataFrame()
+       redo_timestep = False
+       for cr_id in previous_cps_state:
+           if not self._document_sampler.viable_creators[cr_id].viable:
+               current_satisfaction = 0
+           else:
+               current_satisfaction = self._document_sampler.viable_creators[cr_id].satisfaction
+           creator_df = creator_df.append(pd.DataFrame( {"creator_id": [cr_id], "creator_satisfaction": [ current_satisfaction ],  "creator_previous_satisfaction": [previous_cps_state[cr_id].satisfaction ], "creator_action": [ creator_response[cr_id][0]  ] }))
+
+       creator_df = self.normalize(creator_df, "creator_previous_satisfaction", "creator_previous_satisfaction_normalized")
+       creator_df = self.normalize(creator_df, "creator_previous_satisfaction", "creator_previous_satisfaction_scaled")
+       recommended_cp = all_documents_df["creator_id"].unique()
+       print("at this timestep", all_documents_df["creator_id"].unique(), "have been recommended" )
+
+       #if cp[satisfaction].max() - y >  alpha where y in cp[satisfaction] and alpha unfairness tollerance
+       max_sat = creator_df["creator_previous_satisfaction_normalized"].max()
+       print(max_sat, creator_df["creator_previous_satisfaction_normalized"])
+       alpha = 0.2 #to be tuned
+       substituted_cp = []
+
+       #TODO: all_document_df needs to be update here, otherwise need to get response from user:
+                #replace the existing row of cp_max with the new one of cp
+                #track down the cp that have been already substituted, just to be sure you don't enter in a loop
+       for cp in creator_df["creator_id"]:
+         if cp not in recommended_cp:
+            print(cp, "not in ", recommended_cp)
+            check = creator_df.loc[creator_df["creator_id"] == cp]
+            math = round(max_sat - float(check["creator_previous_satisfaction_normalized"]), 1)
+            print("math", math)
+            if math >  alpha:
+                 print("if")
+                 #recommend cp instead of the cp with highest satisfaction into the slate
+                 docs_cp_max = pd.DataFrame()
+
+                 cp_max = self.get_recommended_cp_with_max_sat(creator_df ,all_documents_df["creator_id"].unique())
+                 #gets from the current recommended documents, the documents that has been recommended by the cp with highest satisfaction
+                 docs_cp_max = docs_cp_max.append(all_documents_df.loc[all_documents_df["creator_id"]== cp_max])["document_id"].unique()
+                 print(" I'm going to substitute ", cp_max, " with cp", cp, docs_cp_max )
+                 print(float(creator_df.loc[creator_df["creator_id"] == cp_max]["creator_previous_satisfaction_normalized"]), float(creator_df.loc[creator_df["creator_id"] == cp]["creator_previous_satisfaction_normalized"]))
+                 if float(creator_df.loc[creator_df["creator_id"] == cp_max]["creator_previous_satisfaction_normalized"]) > float(creator_df.loc[creator_df["creator_id"] == cp]["creator_previous_satisfaction_normalized"]):
+                     print("possible_doc_to_substitute", docs_cp_max[0])
+
+                     get_first_doc_to_replace =  all_documents_df.loc[all_documents_df["document_id"]== docs_cp_max[0]]["doc"].unique()[0]
+                     print("tmp_doc_to_substitute", get_first_doc_to_replace)
+                     topic = get_first_doc_to_replace.create_observation_nominal()["topic"]
+                     tmp = list(self._current_documents)
+                     tmp = [int(x) for x in tmp]
+                     print("slate before modifying: ", tmp)
+                     get_sub_index = tmp.index(get_first_doc_to_replace.create_observation_nominal()["doc_id"])
+
+                     new_doc = self._document_sampler.sample_from_cp( cp, topic, tmp)
+                     if new_doc in tmp:
+                         new_doc = []
+                     print("new_doc", new_doc)
+                     if new_doc:
+                         substituted_cp.append(cp_max)
+                         tmp[get_sub_index] = new_doc.create_observation()["doc_id"]
+                         self._candidate_set.add_document(new_doc)
+                         #print("newslate: ", get_sub_index, self._candidate_set.get_documents(tmp))
+                         update_current_documents = {}
+                         for elem in self._candidate_set.get_documents(tmp):
+                             update_current_documents[elem.doc_id()] = elem.create_observation()
+
+                         self._current_documents = collections.OrderedDict(update_current_documents)
+                         all_documents_df.loc[all_documents_df["document_id"] == docs_cp_max[0], "creator_id"] = cp
+                         all_documents_df.loc[all_documents_df["document_id"] == docs_cp_max[0], "doc"] = new_doc
+                         all_documents_df.loc[all_documents_df["document_id"] == docs_cp_max[0], "document_id" ] = new_doc.create_observation()["doc_id"]
+                         print("slate after modifying: ", list(self._current_documents))
+                         redo_timestep = True
+                     else:
+                         print("he doesn't have eligible doc, so do nothing and let him go")
+                 else:
+                     print("keep as it is ")
+
+            else:
+                print("he doesn't need to be recommended, he's satisfaction value is enough  ")
+         else:
+             print(cp, "in ", recommended_cp)
+       print("at the end of the rebalance process, this cp have been recommended", all_documents_df["creator_id"].unique() )
+       return redo_timestep
+
+
+
+  def keep_content_providers(self, previous_cps_state, all_documents_df, creator_response, t ):
+      creator_df = pd.DataFrame()
+      redo_timestep = True
+      for cr_id in previous_cps_state:
+          if not self._document_sampler.viable_creators[cr_id].viable:
+              current_satisfaction = 0
+          else:
+              current_satisfaction = self._document_sampler.viable_creators[cr_id].satisfaction
+          creator_df = creator_df.append(pd.DataFrame( {"creator_id": [cr_id], "creator_satisfaction": [ current_satisfaction ],  "creator_previous_satisfaction": [previous_cps_state[cr_id].satisfaction ], "creator_action": [ creator_response[cr_id][0]  ] }))
+
+      #creator_df = self.normalize(creator_df, "creator_satisfaction", "creator_normalized_satisfaction")
+      #creator_df = self.normalize(creator_df, "creator_satisfaction", "creator_scaled_satisfaction")
+
+
+      print("state at time ",t, "\n ",  creator_df["creator_satisfaction"])
+      print("at this timestep", all_documents_df["creator_id"].unique(), "have been recommended" )
+
+      cp_leaving = creator_df.loc[creator_df["creator_action"]=="leave"]
+      print("at this timestep", cp_leaving, "wants to leave" )
+
+      docs_cp_max = pd.DataFrame()
+      cp = self.get_recommended_cp_with_max_sat(creator_df ,all_documents_df["creator_id"].unique())
+
+      print(cp, all_documents_df)
+      #gets from the current recommended documents, the documents that has been recommended by the cp with highest satisfaction
+      docs_cp_max = docs_cp_max.append(all_documents_df.loc[all_documents_df["creator_id"]== cp])["document_id"].unique()
+
+      print("possible_doc_to_substitute", docs_cp_max[0])
+
+      get_first_doc_to_replace =  all_documents_df.loc[all_documents_df["document_id"]== docs_cp_max[0]]["doc"].unique()[0]
+      print("tmp_doc_to_substitute", get_first_doc_to_replace)
+      topic = get_first_doc_to_replace.create_observation_nominal()["topic"]
+      tmp = list(self._current_documents)
+      tmp = [int(x) for x in tmp]
+      print("slate before modifying: ", tmp)
+      get_sub_index = tmp.index(get_first_doc_to_replace.create_observation_nominal()["doc_id"])
+      #sample new document from cp with min satisfaction
+      for cp in cp_leaving["creator_id"]:
+          new_doc = self._document_sampler.sample_from_cp( cp, topic, tmp)
+          if new_doc:
+
+              tmp[get_sub_index] = new_doc.create_observation()["doc_id"]
+              self._candidate_set.add_document(new_doc)
+              print("newslate: ", get_sub_index, self._candidate_set.get_documents(tmp))
+              update_current_documents = {}
+              for elem in self._candidate_set.get_documents(tmp):
+                  print("elem ", elem.create_observation())
+                  update_current_documents[elem.doc_id()] = elem.create_observation()
+                  print("update_current_documents", update_current_documents)
+              self._current_documents = collections.OrderedDict(update_current_documents)
+          else:
+              if not self._document_sampler.viable_creators[cp].viable:
+                  del self._document_sampler.viable_creators[cp]
+                  print("do nothing and let him go")
+                  redo_timestep = False
+
+      print("slate after modifying: ", list(self._current_documents))
+      return redo_timestep
+
+  """TODO:
+        1.check if any cp is leaving
+        2. If so,
+            identify the cp who wants to leave
+           otherwise 5
+            check that he has the minimum satisfaction
+            check the cp who has the maximum satisfaction
+            remove from the slate the document recommended from the cp with max satisfaction and insert a new document from the cp with min satisfaction
+        3.manipulate the slate in order to let him stay on the platform
+        4.check that other react fine to the new slates, return to 1
+            #users react fine, but their gini coefficient is still highest
+                #find a method to decrease it, perhaps rebalancing?
+        5.continue the simulation
+  """
+  def simulate_step(self, slates, t, approach):
     """Executes the action, returns next state observation and reward.
 
     Args:
@@ -264,7 +468,6 @@ class EcosystemEnvironment(environment.MultiUserEnvironment):
       done: A boolean indicating whether the episode has terminated. An episode
         is terminated whenever there is no user or creator left.
     """
-
     assert (len(slates) == self.num_users
            ), 'Received unexpected number of slates: expecting %s, got %s' % (
                self._slate_size, len(slates))
@@ -276,27 +479,59 @@ class EcosystemEnvironment(environment.MultiUserEnvironment):
     all_documents = dict()  # Accumulate documents served to each user.
     all_responses = dict(
     )  # Accumulate each user's responses to served documents.
-    for user_model in self.user_model:
-      if not user_model.is_terminal():
-        user_id = user_model.get_user_id()
-        # Get the documents associated with the slate.
-        doc_ids = list(self._current_documents)  # pytype: disable=attribute-error
-        mapped_slate = [doc_ids[x] for x in slates[user_id]]
-        documents = self._candidate_set.get_documents(mapped_slate)
-        # Acquire user response and update user states.
-        responses = user_model.update_state(documents)
-        all_documents[user_id] = documents
-        all_responses[user_id] = responses
 
-    def flatten(list_):
-      return list(itertools.chain(*list_))
+    previous_user_state = copy.deepcopy(self.user_model)
+    previous_cps_state = copy.deepcopy(self._document_sampler.viable_creators)
+    redo_timestep =True
 
-    # Update the creators' state.
-    creator_response = self._document_sampler.update_state(
-        flatten(list(all_documents.values())),
-        flatten(list(all_responses.values())))
+    while(redo_timestep):
+        print("time t", t)
+        #restore previous user  state
+        for u in range(len(self.user_model)):
+           self.user_model[u].restore(previous_user_state[u])
 
-    print("creator_response", creator_response)
+        for user_model in self.user_model:
+          if not user_model.is_terminal():
+            user_id = user_model.get_user_id()
+            # Get the documents associated with the slate.
+            doc_ids = list(self._current_documents)  # pytype: disable=attribute-error
+
+            mapped_slate = [doc_ids[x] for x in slates[user_id]]
+
+            #print("mapped_slate", doc_ids,  mapped_slate)
+            documents = self._candidate_set.get_documents(mapped_slate)
+            # Acquire user response and update user states.
+            responses = user_model.simulate_update_state(documents)
+            all_documents[user_id] = documents
+            all_responses[user_id] = responses
+
+        all_documents_df = pd.DataFrame()
+
+        for user_model in self.user_model:
+            user_id = user_model.get_user_id()
+            #print("time", t, "all documents for user_id ",user_id, len(all_documents[user_id]))
+            for doc in all_documents[user_id]:
+                all_documents_df = all_documents_df.append(pd.DataFrame({"user_id": [user_id], "doc": doc, "document_id": [doc.create_observation()["doc_id"]], "topic": [doc.create_observation_nominal()["topic"]], "creator_id": [doc.create_observation()["creator_id"]]}))
+
+        def flatten(list_):
+          return list(itertools.chain(*list_))
+
+        self._document_sampler.restore_creator_state(previous_cps_state)
+
+
+        # Update the creators' state.
+        creator_response, modify_slate = self._document_sampler.update_state(
+            flatten(list(all_documents.values())),
+            flatten(list(all_responses.values())), t, approach)
+
+
+
+        #redo_timestep = self.rebalance_content_provider_satisfaction(previous_cps_state, all_documents_df, creator_response, t  )
+
+        if(modify_slate):
+            redo_timestep = self.keep_content_providers(previous_cps_state, all_documents_df, creator_response, t  ) # t is just for debugging reasons
+        else:
+            redo_timestep = False
 
     # Obtain next user state observation.
     self.user_terminates = {
@@ -308,14 +543,11 @@ class EcosystemEnvironment(environment.MultiUserEnvironment):
       if not user_model.is_terminal():
         all_user_obs[user_model.get_user_id()] = user_model.create_observation()
 
+
     # Obtain next creator state observation.
     all_creator_obs = dict()
     for creator_id, creator_model in self._document_sampler.viable_creators.items():
       all_creator_obs[creator_id] = creator_model.create_observation()
-
-    #print("creator_model.create_observation()", creator_model.create_observation())
-
-    #print("all_creator_obs", all_creator_obs)
 
     # Check if reaches a terminal state and return.
     # Terminal if there is no user or creator on the platform.
@@ -334,12 +566,134 @@ class EcosystemEnvironment(environment.MultiUserEnvironment):
       # Create observation of candidate set.
       self._current_documents = collections.OrderedDict(
           self._candidate_set.create_observation())
+      #print("sampled documents: ", self._current_documents )
     else:
       self._current_documents = collections.OrderedDict()
     #print("environment resampled doc", self._current_documents)
   #get  self._current_documents doc_lenght
     return (all_user_obs, all_creator_obs, self._current_documents,
             all_responses, self.user_terminates, creator_response, done)
+
+  def simulate_step_rebalance(self, slates, t, approach):
+   """Executes the action, returns next state observation and reward.
+
+   Args:
+     slates: A list of slates, where each slate is an integer array of size
+       slate_size, where each element is an index into the set of
+       current_documents presented.
+
+   Returns:
+     user_obs: A list of gym observation representing all users' next state.
+     doc_obs: A list of observations of the documents.
+     responses: A list of AbstractResponse objects for each item in the slate.
+     done: A boolean indicating whether the episode has terminated. An episode
+       is terminated whenever there is no user or creator left.
+   """
+   assert (len(slates) == self.num_users
+          ), 'Received unexpected number of slates: expecting %s, got %s' % (
+              self._slate_size, len(slates))
+   for user_id in slates:
+     assert (len(slates[user_id]) <= self._slate_size
+            ), 'Slate for user %s is too large : expecting size %s, got %s' % (
+                user_id, self._slate_size, len(slates[user_id]))
+
+   all_documents = dict()  # Accumulate documents served to each user.
+   all_responses = dict(
+   )  # Accumulate each user's responses to served documents.
+
+   previous_user_state = copy.deepcopy(self.user_model)
+   previous_cps_state = copy.deepcopy(self._document_sampler.viable_creators)
+   redo_timestep =True
+
+   while(redo_timestep):
+       print("time t", t)
+       #restore previous user  state
+       for u in range(len(self.user_model)):
+          self.user_model[u].restore(previous_user_state[u])
+
+       for user_model in self.user_model:
+         if not user_model.is_terminal():
+           user_id = user_model.get_user_id()
+           # Get the documents associated with the slate.
+           doc_ids = list(self._current_documents)  # pytype: disable=attribute-error
+
+           mapped_slate = [doc_ids[x] for x in slates[user_id]]
+
+           #print("mapped_slate", doc_ids,  mapped_slate)
+           documents = self._candidate_set.get_documents(mapped_slate)
+           # Acquire user response and update user states.
+           responses = user_model.simulate_update_state(documents)
+           all_documents[user_id] = documents
+           all_responses[user_id] = responses
+
+       all_documents_df = pd.DataFrame()
+
+       for user_model in self.user_model:
+           user_id = user_model.get_user_id()
+           #print("time", t, "all documents for user_id ",user_id, len(all_documents[user_id]))
+           for doc in all_documents[user_id]:
+               all_documents_df = all_documents_df.append(pd.DataFrame({"user_id": [user_id], "doc": doc, "document_id": [doc.create_observation()["doc_id"]], "topic": [doc.create_observation_nominal()["topic"]], "creator_id": [doc.create_observation()["creator_id"]]}))
+
+       def flatten(list_):
+         return list(itertools.chain(*list_))
+
+       self._document_sampler.restore_creator_state(previous_cps_state)
+
+
+       # Update the creators' state.
+       creator_response, modify_slate = self._document_sampler.update_state(
+           flatten(list(all_documents.values())),
+           flatten(list(all_responses.values())), t, approach)
+
+
+
+       redo_timestep = self.rebalance_content_provider_satisfaction(previous_cps_state, all_documents_df, creator_response, t  )
+
+       """if(modify_slate):
+           redo_timestep = self.keep_content_providers(previous_cps_state, all_documents_df, creator_response, t  ) # t is just for debugging reasons
+       else:
+           redo_timestep = False"""
+
+   # Obtain next user state observation.
+   self.user_terminates = {
+       u_model.get_user_id(): u_model.is_terminal()
+       for u_model in self.user_model
+   }
+   all_user_obs = dict()
+   for user_model in self.user_model:
+     if not user_model.is_terminal():
+       all_user_obs[user_model.get_user_id()] = user_model.create_observation()
+
+
+   # Obtain next creator state observation.
+   all_creator_obs = dict()
+   for creator_id, creator_model in self._document_sampler.viable_creators.items():
+     all_creator_obs[creator_id] = creator_model.create_observation()
+
+   # Check if reaches a terminal state and return.
+   # Terminal if there is no user or creator on the platform.
+   done = self.num_users <= 0 or self.num_creators <= 0
+
+   # Optionally, recreate the candidate set to simulate candidate
+   # generators for the next query.
+   if self.num_creators > 0:
+     if self._resample_documents:
+       # Resample the candidate set from document corpus for the next time
+       # step recommendation.
+       # Candidate set is provided to the agent to select documents that will
+       # be recommended to the user.
+       self._do_resample_documents()
+
+     # Create observation of candidate set.
+     self._current_documents = collections.OrderedDict(
+         self._candidate_set.create_observation())
+     #print("sampled documents: ", self._current_documents )
+   else:
+     self._current_documents = collections.OrderedDict()
+   #print("environment resampled doc", self._current_documents)
+ #get  self._current_documents doc_lenght
+   return (all_user_obs, all_creator_obs, self._current_documents,
+           all_responses, self.user_terminates, creator_response, done)
 
 
 def aggregate_multi_user_reward(responses):
@@ -454,9 +808,9 @@ class EcosystemGymEnv(recsim_gym.RecSimGymEnv):
         doc=doc_obs,
         total_doc_number=self.num_documents)
 
-  def step(self, action, t):
+  def step(self, action, t, approach):
     (user_obs, creator_obs, doc_obs, user_response, user_terminate,
-     creator_response, done) = self._environment.step(action, t)
+     creator_response, done) = self._environment.step(action, t, approach)
     obs = dict(
         user=user_obs,
         creator=creator_obs,
@@ -478,10 +832,10 @@ class EcosystemGymEnv(recsim_gym.RecSimGymEnv):
     return obs, reward, done, info
 
   ##TO be removed eventually
-  def step_fair(self, action):
+  def simulate_step(self, action, t, approach):
     #print("action", action)
     (user_obs, creator_obs, doc_obs, user_response, user_terminate,
-     creator_response, done) = self._environment.step_fair(action)
+     creator_response, done) = self._environment.simulate_step(action, t, approach)
     obs = dict(
         user=user_obs,
         creator=creator_obs,
@@ -499,6 +853,25 @@ class EcosystemGymEnv(recsim_gym.RecSimGymEnv):
 #        'Environment steps with aggregated %f reward. There are %d viable users, %d viable creators and %d viable documents on the platform.',
 #        reward, self.num_users, self.num_creators, self.num_documents)
     #print(self.topic_documents)
+
+    return obs, reward, done, info
+
+  def simulate_step_rebalance(self, action, t, approach):
+      #print("action", action)
+    (user_obs, creator_obs, doc_obs, user_response, user_terminate,
+       creator_response, done) = self._environment.simulate_step_rebalance(action, t, approach)
+    obs = dict(
+          user=user_obs,
+          creator=creator_obs,
+          doc=doc_obs,
+          user_terminate=user_terminate,
+          total_doc_number=self.num_documents,
+          user_response=user_response,
+          creator_response=creator_response)
+
+      # Extract rewards from responses.
+    reward = self._reward_aggregator(user_response)
+    info = self.extract_env_info()
 
     return obs, reward, done, info
 

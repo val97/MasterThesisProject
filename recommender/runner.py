@@ -49,7 +49,7 @@ class Runner:
     self.nsteps = nsteps
 
 
-  def run(self, obs=None):
+  def run(self, post_processing, obs=None):
     """Run simulations with the given initial environment observation.
 
     Args:
@@ -190,8 +190,9 @@ class Runner:
         creator_saturate = preprocessed_candidates[2]
         creator_id = preprocessed_candidates[3]
         candidate_documents.append(preprocessed_candidates[4])
-
+      #print("doc", obs['doc'])
       slates, probs, preprocessed_user = self.agent.step(user_dict, obs['doc'])
+      #print("slates", slates)
 
       policy_probs.extend(list(probs.values()))
       user_embedding_states.append(preprocessed_user)
@@ -204,11 +205,9 @@ class Runner:
         creator_clicked_docs[c_id].append([])
 
       # Record recommended docs of creator (recommender feedback).
-      #print("previous_docs", previous_docs)
       for slate in slates.values():
         for idx in slate:
           doc = previous_docs[idx]
-          #print("docs", doc)
           c_id = doc['creator_id']
           creator_recommended_docs[c_id][t].append(doc)
 
@@ -216,10 +215,12 @@ class Runner:
       # Step the environment.
       #TODOs: new approach: check the state of the cps with the current slate, if one of them is about to leave re-process the slate in order to let him stay.
       #print("slates", slates)
-      obs, _, done, _ = self.env.step(slates, t)
-      #obs, _, done, _ = self.env.step_fair(slates)
-
-      #print("obs", len(obs["doc"]))
+      if(post_processing =="original"):
+        obs, _, done, _ = self.env.step(slates, t, True)
+      elif(post_processing =="gready"):
+        obs, _, done, _ = self.env.simulate_step(slates, t, False)
+      else:
+        obs, _, done, _ = self.env.simulate_step_rebalance(slates, t, False)
 
       # Record if user leaves.
       user_terminates = obs['user_terminate']

@@ -285,8 +285,10 @@ class FairAgent(AbstractAgent):
     if not user_dict['user_clicked_docs'][viable_user_ids[0]]:
       # When no history, generate random slates.
       return generate_random_slate(self.slate_size, user_dict, docs)
+
     policy, preprocessed_users = self.get_policy(user_dict)
     user_id, p = list(policy.keys()), list(policy.values())
+
     #print("slate size", p[0], self.slate_size)
     #print("slate size", p[1], self.slate_size)
     #print("slate size", p[2], self.slate_size)
@@ -517,8 +519,11 @@ class PolicyGradientAgent(AbstractAgent):
       # When no history, generate random slates.
       return generate_random_slate(self.slate_size, user_dict, docs)
     policy, preprocessed_users = self.get_policy(user_dict)
+    #print("policy", policy)
     user_id, p = list(policy.keys()), list(policy.values())
     #print("slate size", p[0], self.slate_size)
+    #print("users selected recommendations ", docs, user_id, len(p) )
+
     #print("slate size", p[1], self.slate_size)
     #print("slate size", p[2], self.slate_size)
     slates = np.argsort(p, axis=-1)[Ellipsis, -self.slate_size:]
@@ -532,12 +537,13 @@ class PolicyGradientAgent(AbstractAgent):
         user_dict, self.user_model)
     user_id, user_hidden_state = zip(*user_hidden_state_dict.items())
     user_hidden_state = np.array(list(user_hidden_state))
-
+    #print(user_hidden_state)
     creator_input = np.tile(self.creator_hidden_state,
                             (len(user_hidden_state), 1, 1))
     doc_input = np.tile(self.doc_feature, (len(user_hidden_state), 1, 1))
     model_inputs = [user_hidden_state, doc_input, creator_input]
     logits = self.actor_model.predict(model_inputs)
+    #print("LOGITS",model_inputs, logits)
     p = scipy.special.softmax(logits, axis=-1)
     return dict(zip(user_id, p)), dict(zip(user_id, user_hidden_state))
 

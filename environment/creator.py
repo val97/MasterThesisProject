@@ -163,6 +163,9 @@ class Creator:
     self.viable = True
     self.is_saturation = is_saturation
 
+    self.previous_topic_preference = copy.deepcopy(topic_preference)
+    self.previous_satisfasction = initial_satisfaction
+
     # Hyperparameters for creator transition dynamics.
     self.viability_threshold = viability_threshold
     self.topic_influence = topic_influence
@@ -171,6 +174,7 @@ class Creator:
     self.recommendation_reward = recommendation_reward
     self.user_click_reward = user_click_reward
     self.satisfaction_decay = satisfaction_decay
+
 
     # Initialize creator's documents with one document of doc_id being
     # initial_doc_id.
@@ -193,8 +197,8 @@ class Creator:
               topic=doc_topic,
               quality=doc_quality,
               creator_id=creator_id))
-
-  def update_state(self, doc_count, documents, user_responses):
+  #TODO: is the same as update creator, could be removed if we restore the state in the document sampler
+  def simulate_update_state(self, doc_count, documents, user_responses):
     """Updates creator state as a response to recommmender's and user's feedback.
 
     Satisfaction change: Firstly, the old satisfaction will decay by the
@@ -234,6 +238,7 @@ class Creator:
         reward is creator incremental saturated_satisfaction change.
     """
     # TODO(team): Make this function more modular.
+
     old_satisfaction = self.satisfaction
     # First decays the satisfaction by satisfaction_decay rate. This allows for
     # capturing the myopic creators, whose actions only depend on current user
@@ -315,9 +320,163 @@ class Creator:
       action = 'leave'
     creator_reward = self.saturated_satisfaction(
         self.satisfaction) - self.saturated_satisfaction(old_satisfaction)
+
     return doc_count, (action, creator_reward)
 
+  def restore_creator_state(self, previous_cps_state):
+     self.creator_id = previous_cps_state.creator_id
+     self.rng = previous_cps_state.rng
 
+     # Parameters for document created by this creator.
+     self.doc_ctor = previous_cps_state.doc_ctor
+     self.doc_quality_mean = previous_cps_state.doc_quality_mean
+     self.doc_quality_std = previous_cps_state.doc_quality_std
+     self.topic_dim = len(previous_cps_state.topic_preference)
+
+     # Creator initial state.
+     # TODO(team): Check whether deepcopy is needed in other places too.
+     self.topic_preference = copy.deepcopy(previous_cps_state.topic_preference)
+     self.satisfaction = previous_cps_state.satisfaction
+     self.viable = True
+     self.is_saturation = previous_cps_state.is_saturation
+
+     # Hyperparameters for creator transition dynamics.
+     self.viability_threshold = previous_cps_state.viability_threshold
+     self.topic_influence = previous_cps_state.topic_influence
+     self.new_document_margin = previous_cps_state.new_document_margin
+     self.no_recommendation_penalty = previous_cps_state.no_recommendation_penalty
+     self.recommendation_reward = previous_cps_state.recommendation_reward
+     self.user_click_reward = previous_cps_state.user_click_reward
+     self.satisfaction_decay = previous_cps_state.satisfaction_decay
+
+
+     # Initialize creator's documents with one document of doc_id being
+     # initial_doc_id.
+     self.documents = previous_cps_state.documents
+
+  def update_state(self, doc_count, documents, user_responses):
+    """Updates creator state as a response to recommmender's and user's feedback.
+
+    Satisfaction change: Firstly, the old satisfaction will decay by the
+    satisfaction_decay rate. Then, if the creator's documents get recommended,
+    her satisfaction will increase by #recommendations x recommendation_reward.
+    If there is any user that clicks the creator's document, her satisfaction
+    will then change by user_click_reward and the user reward.
+
+    Topic_preferece change(optional): Creator's topic preference will change
+    based on the user reward and topics of clicked documents. Specifically,
+      * temporal_topic_preference <- topic_preference + creator.topic_influence
+      * user_reward / self.satisfaction * document.topic
+      * creator.topic_preference = normalize(temporal_topic_preference) to a
+      unit ball
+    Intuitively, if the creator receives positive reward from user, she will
+    tend to generate same topic document next time.
+
+    Create-new-document: The creator will create a new document if her
+    saturated satisfaction increases by another new_document_margin.
+
+    Viability: The creator will be no longer viable if her saturated
+    satisfaction is below the viability_threshold.
+
+    Args:
+      doc_count: Int representing number of created documents on the platform,
+        used for creating document ID for new document if there is.
+      documents: A list of creator's recommended documents at the current time
+        step. The document list can contain duplicate documents since one
+        document can be recommended to more than one user at a time.
+      user_responses: A list of Response observations for the creator's
+        recommended documents.
+
+    Returns:
+      doc_count: Updated number of existing documents on the platform.
+      (action, reward): A tuple of creator response, where action is a string
+        describing creator's action, which is one of 'create'/'stay'/'leave';
+        reward is creator incremental saturated_satisfaction change.
+    """
+    # TODO(team): Make this function more modular.
+    old_satisfaction = self.satisfaction
+    # First decays the satisfaction by satisfaction_decay rate. This allows for
+    # capturing the myopic creators, whose actions only depend on current user
+    # and recommender feedback.
+    self.satisfaction = self.satisfaction * self.satisfaction_decay
+    # Default action is to stay.
+    action = 'stay'
+
+    if documents:
+      # Update creator satisfaction.
+      ## Feedback from recommender: increase satisfaction from being recommended
+      self.satisfaction += len(documents) * self.recommendation_reward
+      ## Feedback from users: modify satisfaction based on user reward
+      for response in user_responses:
+        if response['click']:
+          self.satisfaction += self.user_click_reward
+          self.satisfaction += response['reward']
+
+      # Update creator's topic preference based on user reward and the creator's
+      # current satisfaction with the platform.
+      # Adjust user_reward by old_satisfaction to reflect that popular creators
+      # are less affected by one user preference.
+      for doc, response in zip(documents, user_responses):
+        if response['click']:
+          self.topic_preference = self.topic_preference + (
+              self.topic_influence * response['reward'] / old_satisfaction *
+              doc.topic)
+      ## Normalize the creator.topic_preference to the unit ball.
+      self.topic_preference = self.topic_preference / np.linalg.norm(
+          self.topic_preference)
+
+      # Create new documents.
+      # The criterion for creating new documents is motivated by the conjecture
+      # that creating a document might be a result of positive feedback from
+      # the platform across multiple time steps.
+      # Thus we use the accumulated satisfaction here.
+      # Every time the creator's satisfaction has increased by another
+      # new_document_margin,she will create a new document.
+      # For example, consider the new_document_margin=2, if the
+      # old_saturated_satisfaction is 1.8 and the new_saturated_satisfaction
+      # is 2.1, then the creator will create a new document. On the contrary,
+      # if the old_saturated_satisfaction is 1.5 and the
+      # new_saturated_satisfaction is 1.9, then the creator will not create
+      # a document.
+      for _ in range(
+          int(
+              self.saturated_satisfaction(old_satisfaction) //
+              self.new_document_margin),
+          int(
+              self.saturated_satisfaction(self.satisfaction) //
+              self.new_document_margin)):
+        # create new content
+        doc_quality = sampling_utils.sample_from_truncated_normal(
+            mean=self.doc_quality_mean,
+            std=self.doc_quality_std,
+            clip_a=-1,
+            clip_b=1)
+        # Use softmax probability to sample topic for new document.
+        log_prob = self.topic_preference - max(self.topic_preference)
+        doc_topic_prob = np.exp(log_prob) / np.sum(np.exp(log_prob))
+        doc_topic = np.zeros(self.topic_dim)
+        doc_topic[self.rng.choice(len(self.topic_preference),
+                                  p=doc_topic_prob)] = 1
+        self.documents.append(
+            self.doc_ctor(
+                doc_id=doc_count,
+                topic=doc_topic,
+                quality=doc_quality,
+                creator_id=self.creator_id))
+        doc_count += 1
+        action = 'create'
+    else:
+      # Decrease the creator satisfaction by no_recommendation_penalty
+      self.satisfaction -= self.no_recommendation_penalty
+
+    # Update creator viability.
+    #print("satisfaction ", self.satisfaction)
+    self.update_viability()
+    if not self.viable:
+      action = 'leave'
+    creator_reward = self.saturated_satisfaction(
+        self.satisfaction) - self.saturated_satisfaction(old_satisfaction)
+    return doc_count, (action, creator_reward)
 
   def update_viability(self):
     # Creator is no longer viable if her saturated satisfaction is below the
@@ -672,8 +831,56 @@ class DocumentSampler(document.AbstractDocumentSampler):
       # Sampling without replacement.
       return np.random.choice(documents, size=size, replace=False)
 
-  def update_state(self, documents, responses, t ):
+  def sample_from_cp(self, cp_id, topic, slate):
+    print("sampling from cp:  ", cp_id, topic)
+    documents = []
+    #filter by document
+    #print("cp's documents: ", self.viable_creators.get(cp_id).documents)
+    #filter by topic
+    for doc in self.viable_creators.get(cp_id).documents:
+        if doc.create_observation_nominal()["topic"] == topic and doc.create_observation_nominal()["doc_id"] not in slate:
+            documents.append(doc)
+            #print(doc.create_observation())
+    sampled = []
+    if documents:
+        #print("doc per topic: ", documents)
+        sampled = np.random.choice(documents, size=1, replace=False)[0]
+        #print("sampled",sampled.create_observation())
+    #what to do if cp_id doesn't have doc with given topic? let it leave?
+    print("sampled", sampled)
+    return sampled
+
+
+  def update_state(self, documents, responses, t, approach):
     modify_slate = False
+    creators_popularity = {
+        creator_id: dict(documents=[], user_responses=[])
+        for creator_id in self.viable_creators.keys()
+    }
+    for doc, response in zip(documents, responses):
+      #print("doc_len", len(documents), "doc", doc, "response",  response)
+      creator_id = doc.creator_id
+      creators_popularity[creator_id]['documents'].append(doc)
+      creators_popularity[creator_id]['user_responses'].append(response)
+    #print("creator_recommended docs", creators_popularity[creator_id]["documents"], len(creators_popularity[creator_id]["documents"]))
+    creator_response = dict()
+    for creator_id, creator_popularity in creators_popularity.items():
+      self.doc_count, response = self.viable_creators[creator_id].update_state(
+          doc_count=self.doc_count, **creator_popularity)
+      if response[0] == "leave":
+          print("creator ", creator_id, "is leaving the platform at time ", t, "with satisfaction ", self.viable_creators[creator_id].satisfaction )
+          print("so it's needed to redo the slate")
+          modify_slate = True
+      creator_response[creator_id] = response
+      if(approach):
+          if not self.viable_creators[creator_id].viable:  #to be commented if simulate_step
+            del self.viable_creators[creator_id]
+    #print("creator_response", creator_response)
+    return creator_response, modify_slate
+
+  def simulate_update_state(self, documents, responses, t ):
+    #print(self, self.viable_creators)
+    previous_state = copy.deepcopy(self.viable_creators)
     creators_popularity = {
         creator_id: dict(documents=[], user_responses=[])
         for creator_id in self.viable_creators.keys()
@@ -686,15 +893,20 @@ class DocumentSampler(document.AbstractDocumentSampler):
     for creator_id, creator_popularity in creators_popularity.items():
       self.doc_count, response = self.viable_creators[creator_id].update_state(
           doc_count=self.doc_count, **creator_popularity)
-      if response[0] == "leave":
+      """ if response[0] == "leave":
           print("creator ", creator_id, "is leaving the platform at time ", t)
-          print("so it's needed to redo the slate")
-          modify_slate = True
+          print("so it's needed to modify the slate in order to let him stay.")
+          modify_slate = True"""
       creator_response[creator_id] = response
       if not self.viable_creators[creator_id].viable:
         del self.viable_creators[creator_id]
     #print("creator_response", creator_response)
-    return creator_response, modify_slate
+    return creator_response , previous_state
+
+  def restore_creator_state(self, previous_cps_state ):
+    for creator_id in previous_cps_state:
+        self.viable_creators[creator_id].restore_creator_state(previous_cps_state[creator_id])
+
 
   @property
   def num_viable_creators(self):
