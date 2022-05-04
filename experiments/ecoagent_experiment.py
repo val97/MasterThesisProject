@@ -74,7 +74,7 @@ flags.DEFINE_string(
 )
 
 # Runner configs.
-flags.DEFINE_integer('nsteps', 20, 'Maximum length of a trajectory.') # 1600
+flags.DEFINE_integer('nsteps', 1000, 'Maximum length of a trajectory.') # 1600
 flags.DEFINE_float('user_gamma', 0.99, 'Discount factor for user utility.')
 flags.DEFINE_float('creator_gamma', 0.99,
                    'Discount factor for creator utility.')
@@ -1212,7 +1212,7 @@ def main(unused_argv):
       'user_model_seed':
           list(range(num_users)),
       'slate_size':
-          3,
+         3,
       # Hyperparameters for creators and documents.
       'num_creators':
           num_creators,
@@ -1246,8 +1246,7 @@ def main(unused_argv):
       'batch_size': FLAGS.batch_size,
       'summary_frequency': FLAGS.summary_frequency,
   }
-  ckpt_save_dir = os.path.join(FLAGS.logdir, 'ckpt_fair/')
-  #ckpt_save_dir = os.path.join(FLAGS.logdir, 'ckpt/')
+  ckpt_save_dir = os.path.join(FLAGS.logdir, 'ckpt/')
   user_ckpt_save_dir = os.path.join(ckpt_save_dir, 'user')
   creator_ckpt_save_dir = os.path.join(ckpt_save_dir, 'creator')
   actor_ckpt_save_dir = os.path.join(ckpt_save_dir, 'actor')
@@ -1323,7 +1322,7 @@ def main(unused_argv):
   #training and experiment with EcoAgent
   #learn_fair(env_config, user_value_model_config, creator_value_model_config, actor_model_config, exp_config)
 
-  learn(env_config, user_value_model_config, creator_value_model_config, actor_model_config, exp_config, "original")
+  #learn(env_config, user_value_model_config, creator_value_model_config, actor_model_config, exp_config, "original")
   analyze_independent_experiment(env_config, user_value_model_config, creator_value_model_config, actor_model_config, exp_config, [200], FLAGS, user_ckpt_save_dir, creator_ckpt_save_dir)
 
  ### Training and experiment with Random Agent
