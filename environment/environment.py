@@ -187,7 +187,7 @@ class EcosystemEnvironment(environment.MultiUserEnvironment):
              ), 'Slate for user %s is too large : expecting size %s, got %s' % (
                  user_id, self._slate_size, len(slates[user_id]))
 
-    print("time t", t)
+    #print("time t", t)
     all_documents = dict()  # Accumulate documents served to each user.
     all_responses = dict(
     )  # Accumulate each user's responses to served documents.
@@ -214,9 +214,9 @@ class EcosystemEnvironment(environment.MultiUserEnvironment):
         flatten(list(all_documents.values())),
         flatten(list(all_responses.values())),t, approach)
     #print("time", t)
-    if(modify_slate):
+    """if(modify_slate):
         print("Here I need to manually modify the slate; this is the current one:  ")
-        print(slates)
+        print(slates)"""
         # get the current slate and modify it a bit
 
 
@@ -368,6 +368,11 @@ class EcosystemEnvironment(environment.MultiUserEnvironment):
                          redo_timestep = True
                      else:
                          print("he doesn't have eligible doc, so do nothing and let him go")
+                         if not self._document_sampler.viable_creators[cp].viable:
+                            del self._document_sampler.viable_creators[cp]
+                            print("do nothing and let him go")
+                            redo_timestep = False
+
                  else:
                      print("keep as it is ")
 
@@ -423,12 +428,12 @@ class EcosystemEnvironment(environment.MultiUserEnvironment):
 
               tmp[get_sub_index] = new_doc.create_observation()["doc_id"]
               self._candidate_set.add_document(new_doc)
-              print("newslate: ", get_sub_index, self._candidate_set.get_documents(tmp))
+              #print("newslate: ", get_sub_index, self._candidate_set.get_documents(tmp))
               update_current_documents = {}
               for elem in self._candidate_set.get_documents(tmp):
-                  print("elem ", elem.create_observation())
+                  #print("elem ", elem.create_observation())
                   update_current_documents[elem.doc_id()] = elem.create_observation()
-                  print("update_current_documents", update_current_documents)
+                  #print("update_current_documents", update_current_documents)
               self._current_documents = collections.OrderedDict(update_current_documents)
           else:
               if not self._document_sampler.viable_creators[cp].viable:

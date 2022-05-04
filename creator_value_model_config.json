@@ -8,9 +8,9 @@
 16
 ],
 "lr": 0.0007,
-"model_path": "ckpt/creator",
+"model_path": "ckpt_fair/creator",
 "num_creators": 10,
 "regularization_coeff": null,
 "rnn_type": "LSTM",
-"trajectory_length": 1500
+"trajectory_length": 20
 }

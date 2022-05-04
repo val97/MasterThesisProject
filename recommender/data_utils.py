@@ -444,7 +444,7 @@ class ExperienceReplay:
       self.creator_is_saturation[c_key] = creator_is_saturation[c_id]
       # Calculate creator forward discounted utility.
       c_utilities = _get_utilities(c_rewards, self.creator_gamma)       #utilities of creator #n over the whole simulation
-      print("utilities", c_utilities)
+      #print("utilities", c_utilities)
 
       #here a need to calculate also the viability probability of creator #n (or overall viability probability?) over the whole simulation
       #c_viability_likelihood = _get_viability_likelihood(creator_dict[satisfaction] )
@@ -561,7 +561,7 @@ class ExperienceReplay:
     creator_user_rewards = np.array(list(self.creator_user_rewards.values()))
     creator_saturated_satifaction = np.array(
         list(self.creator_previous_satisfaction.values()))
-    print("creator_saturated_satifaction", len(creator_saturated_satifaction))
+    #print("creator_saturated_satifaction", len(creator_saturated_satifaction))
 
     creator_id = np.array([[int(c_key.split('_')[1])] * self.trajectory_length
                            for c_key in self.creator_num_recs.keys()])
@@ -624,9 +624,9 @@ class ExperienceReplay:
     ]
     if creator_embedding_model.creator_id_embedding_size > 0:
       rec_inputs.append(actor_click_creator_id)
-    print("actor_user_rewards", actor_user_rewards)
-    print("actor_user_clicked_docs", actor_user_clicked_docs)
-    print("actor_click_creator_satisfaction", actor_click_creator_satisfaction)
+    #print("actor_user_rewards", actor_user_rewards)
+    #print("actor_user_clicked_docs", actor_user_clicked_docs)
+    #print("actor_click_creator_satisfaction", actor_click_creator_satisfaction)
 
     ul_rec_creator_utilities = creator_embedding_model.predict_value(
         rec_inputs, initial_state=initial_state, mask=mask)
@@ -639,7 +639,7 @@ class ExperienceReplay:
         np.zeros((num_samples, self.trajectory_length, self.doc_feature_size)),
         actor_click_creator_satisfaction,
     ]
-    print("not actor_click_creator_satisfaction", actor_click_creator_satisfaction)
+    #print("not actor_click_creator_satisfaction", actor_click_creator_satisfaction)
 
 
     if creator_embedding_model.creator_id_embedding_size > 0:
@@ -647,14 +647,14 @@ class ExperienceReplay:
     ul_norec_creator_utilities = creator_embedding_model.predict_value(
         rec_inputs, initial_state=initial_state, mask=mask)
 
-    print("ul_rec_creator_utilities", ul_rec_creator_utilities)
-    print("ul_norec_creator_utilities", ul_norec_creator_utilities)
+    #print("ul_rec_creator_utilities", ul_rec_creator_utilities)
+    #print("ul_norec_creator_utilities", ul_norec_creator_utilities)
 
     # Calculate social reward.
     actor_creator_uplift_utilities = ul_rec_creator_utilities - ul_norec_creator_utilities
     self.actor_creator_uplift_utilities = np.array(
         actor_creator_uplift_utilities).flatten()
-    print("actor_creator_uplift_utilities", actor_creator_uplift_utilities)
+    #print("actor_creator_uplift_utilities", actor_creator_uplift_utilities)
 
   def get_click_creator_uplift_viability(self, creator_embedding_model):
       print(" get creator uplift viability ")

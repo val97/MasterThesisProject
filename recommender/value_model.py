@@ -194,8 +194,7 @@ class RnnValueModel:
     else:
       raise NotImplementedError('Only support LSTM/GRU cells.')
 
-  def train_step(self, inputs, targets, masks, st):
-    #print("printing st ", st )
+  def train_step(self, inputs, targets, masks):
     """Batch train."""
     self.ckpt.step.assign_add(1)
     with tf.GradientTape() as tape:

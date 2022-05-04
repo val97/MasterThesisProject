@@ -9,9 +9,9 @@
 ],
 "loss_denom_decay": 0.0,
 "lr": 0.0007,
-"model_path": "ckpt/actor",
+"model_path": "ckpt_fair/actor",
 "regularization_coeff": 1e-05,
-"slate_size": 4,
+"slate_size": 3,
 "social_reward_coeff": 0.0,
 "user_embedding_size": 32,
 "weight_size": 16

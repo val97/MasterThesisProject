@@ -74,7 +74,7 @@ flags.DEFINE_string(
 )
 
 # Runner configs.
-flags.DEFINE_integer('nsteps', 1500, 'Maximum length of a trajectory.') # 1600
+flags.DEFINE_integer('nsteps', 20, 'Maximum length of a trajectory.') # 1600
 flags.DEFINE_float('user_gamma', 0.99, 'Discount factor for user utility.')
 flags.DEFINE_float('creator_gamma', 0.99,
                    'Discount factor for creator utility.')
@@ -98,7 +98,7 @@ flags.DEFINE_integer('batch_size', 32,
 
 
 def learn(env_config, user_value_model_config, creator_value_model_config,
-          actor_model_config, exp_config):
+          actor_model_config, exp_config, post_processing):
   """Train and test user_value_model and creator_value_model with random agent."""
 
   # Random agent normalization.
@@ -148,7 +148,7 @@ def learn(env_config, user_value_model_config, creator_value_model_config,
     # Collect training data.
     for _ in range(exp_config['epoch_runs']):                   #simulation
       (user_dict, creator_dict, preprocessed_user_candidates, _, probs, _,
-       _, topic_distribution, topic_sum) = runner_.run()
+       _, topic_distribution, topic_sum, viable_creators, viable_users ) = runner_.run(post_processing)
       experience_replay.update_experience(
           user_dict,
           creator_dict,
@@ -182,7 +182,7 @@ def learn(env_config, user_value_model_config, creator_value_model_config,
           exp_config['batch_size'],
           creator_id_embedding_size=creator_value_model
           .creator_id_embedding_size):
-        creator_value_model.train_step(*batch_data, "aaaa")
+        creator_value_model.train_step(*batch_data, )
 
     sum_user_normalized_accumulated_reward = np.sum(
         list(experience_replay.user_accumulated_reward.values())
@@ -359,12 +359,12 @@ def lorenz_curve(start_satisfaction_arr, end_satisfaction_arr, ax  ):
     #fig.savefig('distributionSatisfaction.png', dpi=fig.dpi)
 
 
-def plot_viable_creators(agent, viable_creators, experiment, num_interaction, fig, fig7,fig8  ):
+def plot_viable_creators(agent, viable_creators, experiment, num_interaction, fig ):
 
     #colors = ['red','green','blue','purple', 'cyan', 'yellow', 'black', 'magenta', 'orange', 'pink']
     n_cp = viable_creators.groupby(["time"]).count()["creators"]
     minValue = np.amin(n_cp)
-    maxValue = np.amax(n_cp)
+    maxValue = np.amax(n_cp) + 1
     print("experiment", experiment)
     ax = fig.add_subplot(3,4, experiment)
     x = np.arange(num_interaction)
@@ -807,7 +807,7 @@ def learn_RandomAgent(env_config, user_value_model_config, creator_value_model_c
     plt.savefig("topic_distribution_over_time_randomAgent.png")
 
 def run_experiment_RandomAgent(env_config, user_value_model_config, creator_value_model_config,
-          exp_config, num_interaction):
+          exp_config, num_interaction, post_processing):
     env = environment.create_gym_environment(env_config)
     agent_ = agent.RandomAgent(env_config['slate_size'])
     runner_ = runner.Runner(env, agent_, num_interaction)
@@ -826,7 +826,7 @@ def run_experiment_RandomAgent(env_config, user_value_model_config, creator_valu
           # Collect training data.
 
     (user_dict, creator_dict, preprocessed_user_candidates, _, probs, _,
-     _, topic_distribution, topic_sum, viable_creators, viable_users) = runner_.run()
+     _, topic_distribution, topic_sum, viable_creators, viable_users) = runner_.run(post_processing)
 
     num_users.append(runner_.env.num_users)
 
@@ -925,13 +925,13 @@ def learn_fair(env_config, user_value_model_config, creator_value_model_config, 
             exp_config['batch_size']):
           tmp  = batch_data
           #user_value_model.train_step(*batch_data)
-          user_value_model.train_step(*batch_data, "user")
+          user_value_model.train_step(*batch_data)
 
         for batch_data in experience_replay.creator_data_generator(
             exp_config['batch_size'],
             creator_id_embedding_size=creator_value_model
             .creator_id_embedding_size):
-          creator_value_model.train_step(*batch_data, "creator")
+          creator_value_model.train_step(*batch_data)
 
       sum_user_normalized_accumulated_reward = np.sum(
           list(experience_replay.user_accumulated_reward.values())
@@ -1038,53 +1038,90 @@ def analyze_independent_experiment(env_config, user_value_model_config, creator_
 
     topicOverCP = PdfPages('TopicOverCP.pdf')
     topic_pref = PdfPages('TopicPreference.pdf')
+    topicOverPostprocessing = PdfPages('TopicOverCPpostProcessing.pdf')
+    topic_pref_gready = PdfPages('TopicPreferencePostProcessing_gready.pdf')
+    topic_pref_rebalance =PdfPages('TopicPreferencePostProcessing_rebalance.pdf')
 
 
     for n in interaction_vector:                                            #running independent experiment and plotting topic characteristic for each experiment
 
         topic_distribution_EcoAgent, topic_sum_EcoAgent, viable_creators_EcoAgent, viable_users = run_experiment_Ecoagent(env_config, user_value_model_config, creator_value_model_config, actor_model_config, exp_config, n, "original")
-        topic_distribution_EcoAgent_gready, topic_sum_EcoAgent_gready, viable_creators_EcoAgent_gready, viable_users_gready = run_experiment_Ecoagent(env_config, user_value_model_config, creator_value_model_config, actor_model_config, exp_config, n, "gready")
-        topic_distribution_EcoAgent_rebalance, topic_sum_EcoAgent_rebalance, viable_creators_EcoAgent_rebalance, viable_users_rebalance = run_experiment_Ecoagent(env_config, user_value_model_config, creator_value_model_config, actor_model_config, exp_config, n, "rebalance")
-
-        topic_distribution_RandomAgent, topic_sum_RandomAgent, viable_creators_RandomAgent = run_experiment_RandomAgent(env_config, user_value_model_config, creator_value_model_config, exp_config, n)
+        topic_distribution_RandomAgent, topic_sum_RandomAgent, viable_creators_RandomAgent = run_experiment_RandomAgent(env_config, user_value_model_config, creator_value_model_config, exp_config, n, "original")
         plot_topic_distribution("EcoAgent ", topic_distribution_EcoAgent, experiment, n, fig2)
         plot_topic_distribution("RandomAgent ", topic_distribution_RandomAgent, experiment + 2 , n, fig2)
-        plot_topic_distribution("EcoAgent_rebalance ", topic_distribution_EcoAgent_rebalance, experiment, n, fig2_1)
-        plot_topic_distribution("EcoAgent_gready ", topic_distribution_EcoAgent_gready, experiment, n, fig2_1)
-        #rescaled_topic_distribution_plot(topic_distribution_EcoAgent, topic_distribution_RandomAgent, experiment + 1, n, fig2)
+        user_value_model_config = reset_user_model(env_config,  FLAGS, user_ckpt_save_dir)
+        creator_value_model_config = reset_creator_model(env_config, FLAGS, creator_ckpt_save_dir)
+
+        rescaled_topic_distribution_plot(topic_distribution_EcoAgent, topic_distribution_RandomAgent, experiment + 1, n, fig2)
         fig2.savefig("topic_distribution_over_time.pdf")
-        fig2_1.savefig("topic_distribution_over_time_balanced_gready.pdf")
         plot_topic_characteristic_per_timestamp("EcoAgent ", topic_sum_EcoAgent, [], experiment + 1 , n,  fig3.add_subplot(3,4,  experiment + 1))
         plot_topic_characteristic_per_timestamp("RandomAgent ", topic_sum_RandomAgent, [], experiment + 2 , n,  fig3.add_subplot(3,4,  experiment + 2))
-        plot_topic_characteristic_per_timestamp("EcoAgent_rebalance ", topic_distribution_EcoAgent_rebalance, [], experiment + 1 , n,  fig3_1.add_subplot(3,4,  experiment + 1))
-        plot_topic_characteristic_per_timestamp("EcoAgent_gready ", topic_sum_EcoAgent_gready, [], experiment + 2 , n,  fig3_1.add_subplot(3,4,  experiment + 2))
-
         fig = plt.figure(figsize=(60,50))
         figx = plt.figure(figsize=(60,50))
         fig.suptitle("EcoAgent Num. interaction " + str(n), fontsize=13)
         figx.suptitle("RandomAgent Num. interaction " + str(n), fontsize=13)
         plot_topic_characteristic_cp_timestamp("EcoAgent ", viable_creators_EcoAgent, [], experiment + 1 , n, fig)
         plot_topic_characteristic_cp_timestamp("RandomAgent ", viable_creators_RandomAgent, [], experiment + 1 , n, figx)
+        save_plot_to_pdf(fig, figx, topicOverCP)
+        topicOverCP.close()
         fig4 = plt.figure(figsize=(50,25))
         fig5 = plt.figure(figsize=(50,25))
         fig4.suptitle("Analysis of content providers' topic_preference_over_time", fontsize=13)
         fig5.suptitle("Analysis of users' topic preference over time", fontsize=13)
         plot_cr_topic_preference_over_time("EcoAgent ", viable_creators_EcoAgent, 'creators', [], experiment + 1 , n, fig4)
         plot_cr_topic_preference_over_time("EcoAgent ", viable_users,  'users' , [], experiment + 1 , n, fig5)
-        save_plot_to_pdf(fig, figx, topicOverCP)
         save_plot_to_pdf(fig4, fig5, topic_pref)
-        #save_plot_to_pdf2.savefig(figx)
-        #plt.show()
-
-        plot_viable_creators("EcoAgent ", viable_creators_EcoAgent, experiment, n, fig6, fig7,fig8 )  #just fig6 is needed as a parameter
-        plot_viable_creators("EcoAgent_gready ", viable_creators_EcoAgent_gready, experiment, n, fig7,fig8, fig6)
-        plot_viable_creators("EcoAgent_rebalance ", viable_creators_EcoAgent_rebalance, experiment, n, fig8 , fig6, fig7)
-
+        topic_pref.close()
+        plot_viable_creators("EcoAgent ", viable_creators_EcoAgent, experiment, n, fig6)  #just fig6 is needed as a parameter
         fig6.savefig('viable_creators_EcoAgent.png', dpi=fig.dpi)
+        plot_viable_creators("EcoAgent ", viable_creators_RandomAgent, experiment, n, fig6)  #just fig6 is needed as a parameter
+        fig7.savefig('viable_creators_RandomAgent.png', dpi=fig.dpi)
+
+        #topic_distribution_EcoAgent_rebalance, topic_sum_EcoAgent_rebalance, viable_creators_EcoAgent_rebalance, viable_users_rebalance = run_experiment_Ecoagent(env_config, user_value_model_config, creator_value_model_config, actor_model_config, exp_config, n, "rebalance")
+
+        topic_distribution_EcoAgent_gready, topic_sum_EcoAgent_gready, viable_creators_EcoAgent_gready, viable_users_gready = run_experiment_Ecoagent(env_config, user_value_model_config, creator_value_model_config, actor_model_config, exp_config, n, "gready")
+        topic_distribution_EcoAgent_rebalance, topic_sum_EcoAgent_rebalance, viable_creators_EcoAgent_rebalance, viable_users_rebalance = run_experiment_Ecoagent(env_config, user_value_model_config, creator_value_model_config, actor_model_config, exp_config, n, "rebalance")
+
+        plot_topic_distribution("EcoAgent_rebalance ", topic_distribution_EcoAgent_rebalance, experiment, n, fig2_1)
+        plot_topic_distribution("EcoAgent_gready ", topic_distribution_EcoAgent_gready, experiment + 2, n, fig2_1)
+        rescaled_topic_distribution_plot(topic_distribution_EcoAgent_rebalance, topic_distribution_EcoAgent_gready, experiment + 1, n, fig2_1)
+        fig2_1.savefig("topic_distribution_over_time_balanced_gready.pdf")
+        plot_topic_characteristic_per_timestamp("EcoAgent_rebalance ", topic_distribution_EcoAgent_rebalance, [], experiment + 1 , n,  fig3_1.add_subplot(3,4,  experiment + 1))
+        plot_topic_characteristic_per_timestamp("EcoAgent_gready ", topic_sum_EcoAgent_gready, [], experiment + 2 , n,  fig3_1.add_subplot(3,4,  experiment + 2))
+        fig = plt.figure(figsize=(60,50))
+        figx = plt.figure(figsize=(60,50))
+        fig.suptitle("EcoAgent Num. interaction " + str(n), fontsize=13)
+        figx.suptitle("RandomAgent Num. interaction " + str(n), fontsize=13)
+        plot_topic_characteristic_cp_timestamp("EcoAgent ", viable_creators_EcoAgent_gready, [], experiment + 1 , n, fig)
+        plot_topic_characteristic_cp_timestamp("RandomAgent ", viable_creators_EcoAgent_rebalance, [], experiment + 1 , n, figx)
+        save_plot_to_pdf(fig, figx, topicOverPostprocessing)
+        fig4 = plt.figure(figsize=(50,25))
+        fig5 = plt.figure(figsize=(50,25))
+        fig4.suptitle("Analysis of content providers' topic_preference_over_time", fontsize=13)
+        fig5.suptitle("Analysis of users' topic preference over time", fontsize=13)
+        plot_cr_topic_preference_over_time("EcoAgent ", viable_creators_EcoAgent_rebalance, 'creators', [], experiment + 1 , n, fig4)
+        plot_cr_topic_preference_over_time("EcoAgent ", viable_users_rebalance,  'users' , [], experiment + 1 , n, fig5)
+        save_plot_to_pdf(fig4, fig5, topic_pref_rebalance)
+        fig4 = plt.figure(figsize=(50,25))
+        fig5 = plt.figure(figsize=(50,25))
+        fig4.suptitle("Analysis of content providers' topic_preference_over_time_gready", fontsize=13)
+        fig5.suptitle("Analysis of users' topic preference over time gready", fontsize=13)
+        plot_cr_topic_preference_over_time("EcoAgent ", viable_creators_EcoAgent_gready, 'creators', [], experiment + 1 , n, fig4)
+        plot_cr_topic_preference_over_time("EcoAgent ", viable_users_gready,  'users' , [], experiment + 1 , n, fig5)
+        save_plot_to_pdf(fig4, fig5, topic_pref_gready )
+
+        plot_viable_creators("EcoAgent_gready ", viable_creators_EcoAgent_gready, experiment, n, fig7)
+        plot_viable_creators("EcoAgent_rebalance ", viable_creators_EcoAgent_rebalance, experiment, n, fig8)
+
         fig7.savefig('viable_creators_EcoAgent_gready.png', dpi=fig.dpi)
         fig8.savefig('viable_creators_EcoAgent_rebalanced.png', dpi=fig.dpi)
+
+        topic_pref_gready.close()
+        topic_pref_rebalance.close()
+        topicOverPostprocessing.close()
+
         #fig7.savefig('mean.png', dpi=fig.dpi)
-        #fig8.savefig('median.png', dpi=fig.dpi)
+        #fig8.savefig('median.png', dpi=fig.dpi)"""
 
         experiment = experiment + 4
         user_value_model_config = reset_user_model(env_config,  FLAGS, user_ckpt_save_dir)
@@ -1095,7 +1132,7 @@ def analyze_independent_experiment(env_config, user_value_model_config, creator_
     figx = plt.figure(figsize=(60,50))
     figy = plt.figure(figsize=(50,25))
 
-    figy.suptitle("Analysis of Long Term Experimemnt over different timesta mps " + str(n) , fontsize=13)
+    """figy.suptitle("Analysis of Long Term Experimemnt over different timesta mps " + str(n) , fontsize=13)
     #analyze in different timestamps the plot for the long term experiment, so something like This
     half = int(interaction_vector[-1]/2)
     print(half)
@@ -1105,13 +1142,13 @@ def analyze_independent_experiment(env_config, user_value_model_config, creator_
     plot_topic_characteristic_cp_timestamp("EcoAgent ", viable_creators_EcoAgent, [half], experiment + 1 , n, fig)
     #plot_topic_characteristic_cp_timestamp("RandomAgent ", viable_creators_RandomAgent,[half] , experiment + 1 , n, figx)
 
-    save_plot_to_pdf(fig, figx, topicOverCP)
+    #save_plot_to_pdf(fig, figx, topicOverCP)
     topicOverCP.close()
 
     topicPlot = PdfPages('TopicPlot.pdf')
     save_plot_to_pdf(fig3, figy, topicPlot)
-    topicPlot.close()
-    topic_pref.close()
+    topicPlot.close()"""
+
 
 def reset_user_model(env_config, FLAGS, user_ckpt_save_dir):
     user_value_model_config = {
@@ -1175,7 +1212,7 @@ def main(unused_argv):
       'user_model_seed':
           list(range(num_users)),
       'slate_size':
-          4,
+          3,
       # Hyperparameters for creators and documents.
       'num_creators':
           num_creators,
@@ -1209,8 +1246,8 @@ def main(unused_argv):
       'batch_size': FLAGS.batch_size,
       'summary_frequency': FLAGS.summary_frequency,
   }
+  ckpt_save_dir = os.path.join(FLAGS.logdir, 'ckpt_fair/')
   #ckpt_save_dir = os.path.join(FLAGS.logdir, 'ckpt/')
-  ckpt_save_dir = os.path.join(FLAGS.logdir, 'ckpt/')
   user_ckpt_save_dir = os.path.join(ckpt_save_dir, 'user')
   creator_ckpt_save_dir = os.path.join(ckpt_save_dir, 'creator')
   actor_ckpt_save_dir = os.path.join(ckpt_save_dir, 'actor')
@@ -1286,8 +1323,8 @@ def main(unused_argv):
   #training and experiment with EcoAgent
   #learn_fair(env_config, user_value_model_config, creator_value_model_config, actor_model_config, exp_config)
 
-  #learn(env_config, user_value_model_config, creator_value_model_config, actor_model_config, exp_config)
-  analyze_independent_experiment(env_config, user_value_model_config, creator_value_model_config, actor_model_config, exp_config, [700], FLAGS, user_ckpt_save_dir, creator_ckpt_save_dir)
+  learn(env_config, user_value_model_config, creator_value_model_config, actor_model_config, exp_config, "original")
+  analyze_independent_experiment(env_config, user_value_model_config, creator_value_model_config, actor_model_config, exp_config, [200], FLAGS, user_ckpt_save_dir, creator_ckpt_save_dir)
 
  ### Training and experiment with Random Agent
  #learn_RandomAgent(env_config, user_value_model_config, creator_value_model_config, exp_config)

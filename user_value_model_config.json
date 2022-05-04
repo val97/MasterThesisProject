@@ -8,7 +8,7 @@
 ],
 "input_reward": false,
 "lr": 0.0007,
-"model_path": "ckpt/user",
+"model_path": "ckpt_fair/user",
 "regularization_coeff": null,
 "rnn_type": "LSTM",
 "user_feature_size": null
