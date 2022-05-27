@@ -24,6 +24,7 @@ import numpy as np
 import pandas as pd
 import tensorflow as tf
 import training_utils
+import scipy.stats as stats
 
 import matplotlib.pyplot as plt
 from matplotlib.backends.backend_pdf import PdfPages
@@ -57,7 +58,7 @@ flags.DEFINE_integer('actor_weight_size', 16,
 flags.DEFINE_float('actor_learning_rate', 7e-4, 'Learning rate in actor model.')
 flags.DEFINE_float('actor_entropy_coeff', 0,
                    'Entropy coefficient in loss function in actor model.')
-flags.DEFINE_float('social_reward_coeff', 0.0,
+flags.DEFINE_float('social_reward_coeff', 1.0,
                    'Coefficient of social reward in actor model optimization.')
 flags.DEFINE_float(
     'loss_denom_decay', 0.0,
@@ -74,7 +75,7 @@ flags.DEFINE_string(
 )
 
 # Runner configs.
-flags.DEFINE_integer('nsteps', 1000, 'Maximum length of a trajectory.') # 1600
+flags.DEFINE_integer('nsteps', 100, 'Maximum length of a trajectory.') # 1600
 flags.DEFINE_float('user_gamma', 0.99, 'Discount factor for user utility.')
 flags.DEFINE_float('creator_gamma', 0.99,
                    'Discount factor for creator utility.')
@@ -122,7 +123,7 @@ def learn(env_config, user_value_model_config, creator_value_model_config,
                                                   exp_config['user_gamma'],
                                                   exp_config['creator_gamma'])
 
-  train_summary_dir = os.path.join(FLAGS.logdir, 'train/')
+  train_summary_dir = os.path.join(FLAGS.logdir, 'train_random/')
   #os.makedirs(train_summary_dir)
   if( not os.path.isdir(train_summary_dir) ):
       #shutil.rmtree(train_summary_dir)
@@ -694,14 +695,15 @@ def plot_cr_topic_preference_over_time(agent, viable_creators, actor, timestamps
 
 ### adding RANDOM AGENT
 def learn_RandomAgent(env_config, user_value_model_config, creator_value_model_config,
-          exp_config):
+          exp_config, post_processing):
   """Train and test user_value_model and creator_value_model with random agent."""
 
   env = environment.create_gym_environment(env_config)
   agent_ = agent.RandomAgent(env_config['slate_size'])
   runner_ = runner.Runner(env, agent_, exp_config['nsteps'])
 
-  train_summary_dir = os.path.join(FLAGS.logdir, 'train_random/')
+  train_summary_dir = os.path.join(FLAGS.logdir, 'trainOriginal/')
+  #train_summary_dir = os.path.join(FLAGS.logdir, 'train_random/')
   if( not os.path.isdir(train_summary_dir) ):
       os.makedirs(train_summary_dir)
 
@@ -731,14 +733,22 @@ def learn_RandomAgent(env_config, user_value_model_config, creator_value_model_c
     selected_probs = []  # Shape (sum(run_trajectory_length)).
     policy_probs = []  # Shape (sum(run_trajectory_length), num_candidates).
     for _ in range(exp_config['epoch_runs']):
-      (user_dict, creator_dict, _, env_record, probs, _, _, topic_distribution) = runner_.run()
+      (user_dict, creator_dict, preprocessed_user_candidates, _, probs, _,
+       _, topic_distribution, topic_sum, viable_creators, viable_users ) = runner_.run(post_processing)
       experience_replay.update_experience(
           user_dict, creator_dict, update_actor=False)
-      num_users.extend(env_record['user_num'])
+
+    num_users.append(runner_.env.num_users)
+
+    num_creators.append(runner_.env.num_creators)      #num viable creator at the end of the simulation
+    num_documents.append(runner_.env.num_documents)
+    selected_probs.extend(probs['selected_probs'])
+    policy_probs.extend(probs['policy_probs'])
+    """ num_users.extend(env_record['user_num'])
       num_creators.extend(env_record['creator_num'])
       num_documents.extend(env_record['document_num'])
       selected_probs.extend(probs['selected_probs'])
-      policy_probs.extend(probs['policy_probs'])
+      policy_probs.extend(probs['policy_probs'])"""
 
     # Update model with training data.
     for batch_data in experience_replay.user_data_generator(
@@ -1045,7 +1055,7 @@ def analyze_independent_experiment(env_config, user_value_model_config, creator_
 
     for n in interaction_vector:                                            #running independent experiment and plotting topic characteristic for each experiment
 
-        topic_distribution_EcoAgent, topic_sum_EcoAgent, viable_creators_EcoAgent, viable_users = run_experiment_Ecoagent(env_config, user_value_model_config, creator_value_model_config, actor_model_config, exp_config, n, "original")
+        """topic_distribution_EcoAgent, topic_sum_EcoAgent, viable_creators_EcoAgent, viable_users = run_experiment_Ecoagent(env_config, user_value_model_config, creator_value_model_config, actor_model_config, exp_config, n, "original")
         topic_distribution_RandomAgent, topic_sum_RandomAgent, viable_creators_RandomAgent = run_experiment_RandomAgent(env_config, user_value_model_config, creator_value_model_config, exp_config, n, "original")
         plot_topic_distribution("EcoAgent ", topic_distribution_EcoAgent, experiment, n, fig2)
         plot_topic_distribution("RandomAgent ", topic_distribution_RandomAgent, experiment + 2 , n, fig2)
@@ -1075,7 +1085,7 @@ def analyze_independent_experiment(env_config, user_value_model_config, creator_
         plot_viable_creators("EcoAgent ", viable_creators_EcoAgent, experiment, n, fig6)  #just fig6 is needed as a parameter
         fig6.savefig('viable_creators_EcoAgent.png', dpi=fig.dpi)
         plot_viable_creators("EcoAgent ", viable_creators_RandomAgent, experiment, n, fig6)  #just fig6 is needed as a parameter
-        fig7.savefig('viable_creators_RandomAgent.png', dpi=fig.dpi)
+        fig7.savefig('viable_creators_RandomAgent.png', dpi=fig.dpi)"""
 
         #topic_distribution_EcoAgent_rebalance, topic_sum_EcoAgent_rebalance, viable_creators_EcoAgent_rebalance, viable_users_rebalance = run_experiment_Ecoagent(env_config, user_value_model_config, creator_value_model_config, actor_model_config, exp_config, n, "rebalance")
 
@@ -1184,6 +1194,203 @@ def reset_creator_model(env_config, FLAGS, creator_ckpt_save_dir):
 
     return creator_value_model_config
 
+def evaluate_randomAgent(env_config, user_value_model_config, creator_value_model_config, exp_config, post_processing):
+
+  random_user_accumulated_reward = FLAGS.random_user_accumulated_reward
+  random_creator_accumulated_reward = FLAGS.random_creator_accumulated_reward
+
+  env = environment.create_gym_environment(env_config)
+  agent_ = agent.RandomAgent(env_config['slate_size'])
+  runner_ = runner.Runner(env, agent_, exp_config['nsteps'])
+
+  user_value_model = value_model.UserValueModel(**user_value_model_config)
+  creator_value_model = value_model.CreatorValueModel(
+      **creator_value_model_config)
+
+  experience_replay = data_utils.ExperienceReplay(exp_config['nsteps'],
+                                                  env_config['topic_dim'],
+                                                  env_config['num_candidates'],
+                                                  exp_config['user_gamma'],
+                                                  exp_config['creator_gamma'])
+
+  num_creators = []  # Shape (sum(run_trajectory_length)).
+  sum_user_normalized_accumulated_reward = []
+  sum_creator_normalized_accumulated_reward = []
+  users_reward = pd.DataFrame()
+  creator_reward = pd.DataFrame()
+  for rollout in range(50):
+      print("rollout", rollout)
+
+      (user_dict, creator_dict, preprocessed_user_candidates, _, probs, _,
+      _, topic_distribution, topic_sum, viable_creators, viable_users )  = runner_.run(post_processing)
+      experience_replay.update_experience(
+          user_dict, creator_dict, update_actor=False)
+      num_creators.append(runner_.env.num_creators)      #num viable creator at the end of the simulation
+
+      sum_user_normalized_accumulated_reward.append(np.sum(
+          list(experience_replay.user_accumulated_reward.values())
+      ) / experience_replay.num_runs)
+      sum_creator_normalized_accumulated_reward.append(np.sum(
+          list(experience_replay.creator_accumulated_reward.values())
+      ) / experience_replay.num_runs)
+      users_reward[rollout] = experience_replay.mean_reward_over_time
+      creator_reward[rollout] = experience_replay.mean_creator_reward_over_time
+      experience_replay.reset()
+ # users_reward = users_reward.T
+  users_reward["mean"] = users_reward.mean(axis=1)
+  creator_reward["mean"] = creator_reward.mean(axis=1)
+  users_reward = users_reward.T
+  creator_reward = creator_reward.T
+  users_reward.columns = users_reward.columns.astype(str)
+  creator_reward.columns = creator_reward.columns.astype(str)
+
+  users_reward["user_accumulated_reward"] = pd.DataFrame(sum_user_normalized_accumulated_reward)
+  creator_reward["sum_creator_normalized_accumulated_reward"] =  pd.DataFrame(sum_creator_normalized_accumulated_reward)
+
+  print(users_reward, len(sum_user_normalized_accumulated_reward) )
+  print(creator_reward, len(sum_user_normalized_accumulated_reward) )
+  #users_reward.columns.values[0] = "rollout"
+  plot_evaluation(users_reward, creator_reward, "randomEval/Random_evaluation"+ str(exp_config["nsteps"]), exp_config["nsteps"])
+  users_reward.to_csv("randomEval/user"+ str(exp_config["nsteps"])+".csv")
+  creator_reward.to_csv("randomEval/creator"+str(exp_config["nsteps"])+".csv")
+
+  print("num_creators", num_creators)
+  print("sum_user_normalized_accumulated_reward", np.mean(sum_user_normalized_accumulated_reward))
+  print("sum_creator_normalized_accumulated_reward", np.mean(sum_creator_normalized_accumulated_reward))
+
+def evaluate_EcoAgent(env_config, user_value_model_config, creator_value_model_config, actor_model_config, exp_config, post_processing):
+  # Random agent normalization.
+  random_user_accumulated_reward = FLAGS.random_user_accumulated_reward
+  random_creator_accumulated_reward = FLAGS.random_creator_accumulated_reward
+
+  env = environment.create_gym_environment(env_config)
+  user_value_model = value_model.UserValueModel(**user_value_model_config)
+  creator_value_model = value_model.CreatorValueModel(
+    **creator_value_model_config)
+  actor_model = agent.PolicyGradientAgent(
+        user_model=user_value_model,
+        creator_model=creator_value_model,
+        **actor_model_config)
+  runner_ = runner.Runner(env, actor_model, exp_config['nsteps'])
+
+
+  experience_replay = data_utils.ExperienceReplay(exp_config['nsteps'],
+                                                  env_config['topic_dim'],
+                                                  env_config['num_candidates'],
+                                                  exp_config['user_gamma'],
+                                                  exp_config['creator_gamma'])
+
+  num_creators = []  # Shape (sum(run_trajectory_length)).
+  sum_user_normalized_accumulated_reward = []
+  sum_creator_normalized_accumulated_reward = []
+  overall_scaled_accumulated_reward = []
+  users_reward = pd.DataFrame()
+  creator_reward = pd.DataFrame()
+  for rollout in range(50):
+      print("rollout", rollout)
+      (user_dict, creator_dict, preprocessed_user_candidates, _, probs, _,
+      _, topic_distribution, topic_sum, viable_creators, viable_users )  = runner_.run(post_processing)
+      experience_replay.update_experience(
+         user_dict,
+         creator_dict,
+         preprocessed_user_candidates,
+         update_actor=False)
+
+      num_creators.append(runner_.env.num_creators)      #num viable creator at the end of the simulation
+      print("mean_reward_over_time", experience_replay.mean_creator_reward_over_time)
+      sum_user_normalized_accumulated_reward.append(np.sum(
+          list(experience_replay.user_accumulated_reward.values())
+      ) / experience_replay.num_runs )
+      users_reward[rollout] = experience_replay.mean_reward_over_time
+      creator_reward[rollout] = experience_replay.mean_creator_reward_over_time
+      sum_creator_normalized_accumulated_reward.append(np.sum(
+          list(experience_replay.creator_accumulated_reward.values())
+      ) / experience_replay.num_runs )
+
+      overall_scaled_accumulated_reward.append(
+          (1 - actor_model_config['social_reward_coeff']) *
+          sum_user_normalized_accumulated_reward[-1] +
+          actor_model_config['social_reward_coeff'] *
+          sum_creator_normalized_accumulated_reward[-1])
+
+      experience_replay.reset()
+  users_reward["mean"] = users_reward.mean(axis=1)
+  creator_reward["mean"] = creator_reward.mean(axis=1)
+  users_reward = users_reward.T
+  creator_reward = creator_reward.T
+  users_reward.columns = users_reward.columns.astype(str)
+  creator_reward.columns = creator_reward.columns.astype(str)
+
+  users_reward["user_accumulated_reward"] = pd.DataFrame(sum_user_normalized_accumulated_reward)
+  users_reward["overall_scaled_accumulated_reward"] = pd.DataFrame(overall_scaled_accumulated_reward)
+
+  creator_reward["sum_creator_normalized_accumulated_reward"] =  pd.DataFrame(sum_creator_normalized_accumulated_reward)
+  creator_reward["overall_scaled_accumulated_reward"] = pd.DataFrame(overall_scaled_accumulated_reward)
+
+  creator_reward["num_creators"] =  pd.DataFrame(num_creators)
+
+  print(users_reward, len(sum_user_normalized_accumulated_reward) )
+  print(creator_reward, len(sum_user_normalized_accumulated_reward) )
+  plot_evaluation(users_reward, creator_reward, "0.5eval/Ecoagent evaluation"+ str(exp_config["nsteps"]) +"_"+ str(actor_model_config['social_reward_coeff']),  exp_config["nsteps"])
+  users_reward.to_csv("0.5eval/user"+ str(exp_config["nsteps"])+"_"+ str(actor_model_config['social_reward_coeff'])+".csv")
+  creator_reward.to_csv("0.5eval/creator"+str(exp_config["nsteps"])+"_"+ str(actor_model_config['social_reward_coeff'])+".csv")
+
+  print("num_creators", num_creators)
+  print("sum_user_normalized_accumulated_reward", np.mean(sum_user_normalized_accumulated_reward))
+  print("sum_creator_normalized_accumulated_reward",  np.mean(sum_creator_normalized_accumulated_reward))
+  print("overall_scaled_accumulated_reward", np.mean(overall_scaled_accumulated_reward))
+
+def zscore(df, column, new_column):
+ #min_value, max_value = df[column].min(), df[column].max()
+
+ df[new_column] = stats.zscore(df[column])
+
+ min_value = df[column].min()        #min value sat can have
+ max_value =  df[column].max()
+
+ #@df[new_column] = (df[column] - min_value) / (max_value - min_value)
+ print(df[new_column], df[column])
+ return df
+
+def get_evaluation_data():
+    users_reward = pd.read_csv('randomEval/user100_1.0.csv', index_col=0)
+    creator_reward = pd.read_csv('randomEval/creator100_1.0.csv', index_col=0)
+    print(users_reward, creator_reward)
+    plot_evaluation(users_reward, creator_reward, "randomEval/Ecoagent_evaluation100_1.0",  100)
+
+
+def plot_evaluation(users_reward, creator_reward, evaluation, steps):
+  fig = plt.figure(figsize=[6,6])
+  ax = fig.add_subplot(1,2,1)
+
+  #users_reward = zscore(users_reward, "mean", "normalize_mean")
+  #creator_reward = zscore(creator_reward, "mean", "normalize_mean")
+  usr_mean = users_reward.iloc[-1, 0:steps]
+  creator_mean = creator_reward.iloc[-1, 0:steps]
+  txt_user = "absolute value user: " + str(round(users_reward[str(steps-1)].iloc[-1] - users_reward["0"].iloc[-1],3))
+  txt_creator = "absolute value creator: " + str(round(creator_reward[str(steps-1)].iloc[-1] - creator_reward["0"].iloc[-1],3))
+
+  print(usr_mean)
+  x = np.arange(steps)
+  ax.plot(x, np.array(usr_mean))
+  ax.set_title(evaluation )
+  ax.set_ylabel("user rewards")
+  ax.set_ylim(min(usr_mean.min(),creator_mean.min()),max(usr_mean.max(),creator_mean.max()))
+  ax.set_xlabel("interaction step \n " + txt_user)
+  ax.legend()
+  ax = fig.add_subplot(1,2,2)
+  x = np.arange(steps)
+  ax.plot(x, np.array(creator_mean))
+  ax.set_title(evaluation)
+  ax.set_ylabel(" creator rewards")
+  ax.set_ylim(min(usr_mean.min(),creator_mean.min()),max(usr_mean.max(),creator_mean.max()))
+  ax.set_xlabel("interaction step \n" + txt_creator)
+  ax.legend()
+  #plt.figtext(.5, 0.02, txt_user + "\n" + txt_creator, ha='center')
+
+  #plt.show()
+  plt.savefig(evaluation + ".png")
+
 def main(unused_argv):
 
   num_users, num_creators = 50, 10
@@ -1246,7 +1453,8 @@ def main(unused_argv):
       'batch_size': FLAGS.batch_size,
       'summary_frequency': FLAGS.summary_frequency,
   }
-  ckpt_save_dir = os.path.join(FLAGS.logdir, 'ckpt/')
+  ckpt_save_dir = os.path.join(FLAGS.logdir, 'ckpt_random/')
+  #ckpt_save_dir = os.path.join(FLAGS.logdir, 'ckptOriginal/')
   user_ckpt_save_dir = os.path.join(ckpt_save_dir, 'user')
   creator_ckpt_save_dir = os.path.join(ckpt_save_dir, 'creator')
   actor_ckpt_save_dir = os.path.join(ckpt_save_dir, 'actor')
@@ -1323,11 +1531,14 @@ def main(unused_argv):
   #learn_fair(env_config, user_value_model_config, creator_value_model_config, actor_model_config, exp_config)
 
   #learn(env_config, user_value_model_config, creator_value_model_config, actor_model_config, exp_config, "original")
-  analyze_independent_experiment(env_config, user_value_model_config, creator_value_model_config, actor_model_config, exp_config, [200], FLAGS, user_ckpt_save_dir, creator_ckpt_save_dir)
+  #analyze_independent_experiment(env_config, user_value_model_config, creator_value_model_config, actor_model_config, exp_config, [20], FLAGS, user_ckpt_save_dir, creator_ckpt_save_dir)
 
  ### Training and experiment with Random Agent
- #learn_RandomAgent(env_config, user_value_model_config, creator_value_model_config, exp_config)
-
+ #learn_RandomAgent(env_config, user_value_model_config, creator_value_model_config, exp_config,  "original")
+  evaluate_randomAgent(env_config, user_value_model_config, creator_value_model_config, exp_config, "original")
+ # evaluate_EcoAgent(env_config, user_value_model_config, creator_value_model_config, actor_model_config, exp_config, "original")
+ # get_evaluation_data()
+    # Random agent normalization.
  # load_trained_model_RandomAgent(env_config, user_value_model_config, creator_value_model_config, exp_config)
 
 if __name__ == '__main__':

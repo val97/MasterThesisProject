@@ -20,6 +20,8 @@ import itertools
 
 import numpy as np
 import tensorflow as tf
+import pandas as pd
+import matplotlib.pyplot as plt
 
 
 def _get_utilities(rewards, gamma):
@@ -322,6 +324,10 @@ class ExperienceReplay:
     self.actor_creator_uplift_utilities = []
     self.need_calculate_creator_uplift_utility = True
 
+    #utilities
+    self.mean_reward_over_time = pd.Series()
+    self.mean_creator_reward_over_time = pd.Series()
+
   def update_experience(self,
                         user_dict,
                         creator_dict,
@@ -376,7 +382,7 @@ class ExperienceReplay:
   def update_user_experience(self, user_dict):
     """Update buffer with user-related data."""
     user_clicked_docs = user_dict['user_clicked_docs']
-
+    reward_df = pd.DataFrame()
     for u_id in user_clicked_docs:
       u_key = f'{self.num_runs}_{u_id}'
 
@@ -392,6 +398,8 @@ class ExperienceReplay:
       consumed_docs = [doc['topic'] for doc in consumed_docs]
 
       self.user_accumulated_reward[u_key] = np.sum(rewards)
+
+      reward_df[u_id]= pd.Series([float(x ) for x in rewards])
 
       utilities = _get_utilities(rewards, self.user_gamma)
 
@@ -426,6 +434,15 @@ class ExperienceReplay:
           u_key] = clicked_creator_is_saturation
       self.user_click_creator_id[u_key] = clicked_creator_id
 
+    reward_df["mean"] = reward_df.mean(axis=1)
+    #print("rewards", reward_df)
+
+    self.mean_reward_over_time = reward_df["mean"]
+
+
+
+
+
   def update_creator_experience(self, creator_dict):
     """Update buffer with creator-related data."""
     creator_obs = creator_dict['creator_obs']
@@ -433,12 +450,16 @@ class ExperienceReplay:
     creator_recommended_docs = creator_dict['creator_recommended_docs']
     creator_clicked_docs = creator_dict['creator_clicked_docs']
     creator_is_saturation = creator_dict['creator_is_saturation']
+    reward_df = pd.DataFrame()
 
     for c_id in creator_obs:
+      #print("c_id", c_id)
       c_key = f'{self.num_runs}_{c_id}'
 
       c_rewards = creator_rewards[c_id]
       #print("c_rewards", c_rewards)
+      reward_df[c_id]= pd.Series([float(x ) for x in c_rewards])
+
       self.creator_current_rewards[c_key] = np.array(c_rewards)
       self.creator_accumulated_reward[c_key] = np.sum(c_rewards)
       self.creator_is_saturation[c_key] = creator_is_saturation[c_id]
@@ -502,6 +523,11 @@ class ExperienceReplay:
       self.creator_utilities[c_key] = np.array(c_utilities)
       self.creator_masks[c_key] = mask
       self.creator_trajectory_lengths[c_key] = creator_trajectory_length
+
+    reward_df["mean"] = reward_df.mean(axis=1)
+    #print("rewards", reward_df)
+    self.mean_creator_reward_over_time = reward_df["mean"]
+
 
   def update_actor_experience(self, preprocessed_user_documents):
     """Update buffer with actor-related data."""

@@ -8,9 +8,9 @@
 16
 ],
 "lr": 0.0007,
-"model_path": "ckpt/creator",
+"model_path": "ckpt_random/creator",
 "num_creators": 10,
 "regularization_coeff": null,
 "rnn_type": "LSTM",
-"trajectory_length": 1000
+"trajectory_length": 100
 }

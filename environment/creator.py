@@ -845,7 +845,7 @@ class DocumentSampler(document.AbstractDocumentSampler):
     if documents:
         #print("doc per topic: ", documents)
         sampled = np.random.choice(documents, size=1, replace=False)[0]
-        #print("sampled",sampled.create_observation())
+        print("sampled",sampled.create_observation())
     #what to do if cp_id doesn't have doc with given topic? let it leave?
     print("sampled", sampled)
     return sampled

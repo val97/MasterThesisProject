@@ -387,17 +387,14 @@ class EcosystemEnvironment(environment.MultiUserEnvironment):
 
   def keep_content_providers(self, previous_cps_state, all_documents_df, creator_response, t ):
       creator_df = pd.DataFrame()
-      redo_timestep = True
+      redo_timestep = False
+
       for cr_id in previous_cps_state:
           if not self._document_sampler.viable_creators[cr_id].viable:
               current_satisfaction = 0
           else:
               current_satisfaction = self._document_sampler.viable_creators[cr_id].satisfaction
           creator_df = creator_df.append(pd.DataFrame( {"creator_id": [cr_id], "creator_satisfaction": [ current_satisfaction ],  "creator_previous_satisfaction": [previous_cps_state[cr_id].satisfaction ], "creator_action": [ creator_response[cr_id][0]  ] }))
-
-      #creator_df = self.normalize(creator_df, "creator_satisfaction", "creator_normalized_satisfaction")
-      #creator_df = self.normalize(creator_df, "creator_satisfaction", "creator_scaled_satisfaction")
-
 
       print("state at time ",t, "\n ",  creator_df["creator_satisfaction"])
       print("at this timestep", all_documents_df["creator_id"].unique(), "have been recommended" )
@@ -435,11 +432,14 @@ class EcosystemEnvironment(environment.MultiUserEnvironment):
                   update_current_documents[elem.doc_id()] = elem.create_observation()
                   #print("update_current_documents", update_current_documents)
               self._current_documents = collections.OrderedDict(update_current_documents)
+              print("slate after modifying: ", list(self._current_documents))
+              redo_timestep = True
+              return redo_timestep
           else:
               if not self._document_sampler.viable_creators[cp].viable:
                   del self._document_sampler.viable_creators[cp]
                   print("do nothing and let him go")
-                  redo_timestep = False
+
 
       print("slate after modifying: ", list(self._current_documents))
       return redo_timestep
